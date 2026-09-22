@@ -26,9 +26,17 @@ extension AppDelegate {
         toggleSourceControl.keyEquivalentModifierMask = [.command]
         toggleSourceControl.setImageIfDesired(systemSymbolName: "arrow.triangle.branch")
 
+        let toggleUsage = NSMenuItem(
+            title: "Show Usage",
+            action: #selector(TerminalController.toggleUsage(_:)),
+            keyEquivalent: "u")
+        toggleUsage.keyEquivalentModifierMask = [.command]
+        toggleUsage.setImageIfDesired(systemSymbolName: "chart.line.uptrend.xyaxis")
+
         viewMenu.insertItem(toggleSidebar, at: 0)
         viewMenu.insertItem(verticalTabs, at: 1)
         viewMenu.insertItem(toggleSourceControl, at: 2)
-        viewMenu.insertItem(.separator(), at: 3)
+        viewMenu.insertItem(toggleUsage, at: 3)
+        viewMenu.insertItem(.separator(), at: 4)
     }
 }

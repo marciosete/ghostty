@@ -13,6 +13,7 @@ struct TabSidebarContainerView<Content: View>: View {
     @ObservedObject var settings = TabSidebarSettings.shared
     let sourceControl: SourceControlPanelModel
     @ObservedObject var sourceControlSettings = SourceControlSettings.shared
+    @ObservedObject var usageSettings = UsageSettings.shared
     let content: Content
 
     init(
@@ -43,23 +44,29 @@ struct TabSidebarContainerView<Content: View>: View {
                     content
                 }
 
-                sourceControlPanel(topInset: model.titlebarHeight)
+                rightPanels(topInset: model.titlebarHeight)
             }
             .ignoresSafeArea(.container, edges: .top)
         } else {
             HStack(spacing: 0) {
                 content
-                sourceControlPanel(topInset: 0)
+                rightPanels(topInset: 0)
             }
         }
     }
 
     @ViewBuilder
-    private func sourceControlPanel(topInset: CGFloat) -> some View {
+    private func rightPanels(topInset: CGFloat) -> some View {
         if sourceControlSettings.isVisible {
             separator
             SourceControlPanelView(model: sourceControl, topInset: topInset)
                 .frame(width: sourceControlSettings.width)
+        }
+
+        if usageSettings.isVisible {
+            separator
+            UsagePanelView(topInset: topInset)
+                .frame(width: usageSettings.width)
         }
     }
 

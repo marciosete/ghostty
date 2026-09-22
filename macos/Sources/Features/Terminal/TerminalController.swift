@@ -1445,9 +1445,23 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         TabSidebarSettings.shared.isEnabled.toggle()
     }
 
-    /// Shows or hides the source control panel in all windows.
+    /// Shows or hides the source control panel in all windows. It shares the right side
+    /// of the window with the usage panel, so showing one hides the other.
     @IBAction func toggleSourceControl(_ sender: Any?) {
-        SourceControlSettings.shared.isVisible.toggle()
+        let settings = SourceControlSettings.shared
+        if !settings.isVisible {
+            UsageSettings.shared.isVisible = false
+        }
+        settings.isVisible.toggle()
+    }
+
+    /// Shows or hides the usage panel in all windows.
+    @IBAction func toggleUsage(_ sender: Any?) {
+        let settings = UsageSettings.shared
+        if !settings.isVisible {
+            SourceControlSettings.shared.isVisible = false
+        }
+        settings.isVisible.toggle()
     }
 
     @IBAction func returnToDefaultSize(_ sender: Any?) {
@@ -1783,6 +1797,10 @@ extension TerminalController {
 
         case #selector(toggleSourceControl):
             item.title = SourceControlSettings.shared.isVisible ? "Hide Source Control" : "Show Source Control"
+            return (window as? TerminalWindow)?.supportsTabSidebar ?? false
+
+        case #selector(toggleUsage):
+            item.title = UsageSettings.shared.isVisible ? "Hide Usage" : "Show Usage"
             return (window as? TerminalWindow)?.supportsTabSidebar ?? false
 
         case #selector(returnToDefaultSize):
