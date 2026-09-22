@@ -66,8 +66,31 @@ class TerminalWindow: NSWindow {
             guard tabColor != oldValue else { return }
             tabColorIndicator.rootView = TabColorIndicatorView(tabColor: tabColor)
             invalidateRestorableState()
+            postTabSidebarItemDidChange()
         }
     }
+
+    /// The user tab group (shown in the tab sidebar) that this tab belongs to.
+    var userTabGroupID: UUID? {
+        didSet {
+            guard userTabGroupID != oldValue else { return }
+            invalidateRestorableState()
+            postTabSidebarItemDidChange()
+        }
+    }
+
+    /// The state behind this window's vertical tab sidebar.
+    private(set) lazy var tabSidebarModel = TabSidebarModel(hostWindow: self)
+
+    /// Whether this window style can show the vertical tab sidebar. Styles that draw
+    /// their own tab bar or don't support tabs override this.
+    var supportsTabSidebar: Bool { true }
+
+    /// Titlebar button that shows and hides the tab sidebar.
+    let tabSidebarToggleAccessory = NSTitlebarAccessoryViewController()
+
+    /// State for the tab sidebar integration, see TerminalWindow+TabSidebar.
+    var tabSidebarState = TabSidebarWindowState()
 
     // MARK: NSWindow Overrides
 
@@ -173,6 +196,8 @@ class TerminalWindow: NSWindow {
 
         // Get our saved level
         level = UserDefaults.ghostty.value(forKey: Self.defaultLevelKey) as? NSWindow.Level ?? .normal
+
+        setupTabSidebar()
     }
 
     // Both of these must be true for windows without decorations to be able to
@@ -207,6 +232,7 @@ class TerminalWindow: NSWindow {
         super.resignKey()
         resetZoomTabButton.contentTintColor = .secondaryLabelColor
         tabTitleEditor.finishEditing(commit: true)
+        tabSidebarModel.commitEditing()
     }
 
     override func becomeMain() {
@@ -214,11 +240,12 @@ class TerminalWindow: NSWindow {
 
         // Its possible we miss the accessory titlebar call so we check again
         // whenever the window becomes main. Both of these are idempotent.
-        if tabBarView != nil {
+        if tabBarView != nil && !isTabSidebarActive {
             tabBarDidAppear()
         } else {
             tabBarDidDisappear()
         }
+        syncNativeTabBarVisibility()
         viewModel.isMainWindow = true
     }
 
@@ -252,6 +279,12 @@ class TerminalWindow: NSWindow {
         }
     }
 
+    override func moveTabToNewWindow(_ sender: Any?) {
+        // A tab moved to its own window leaves its group behind.
+        userTabGroupID = nil
+        super.moveTabToNewWindow(sender)
+    }
+
     override func addTitlebarAccessoryViewController(_ childViewController: NSTitlebarAccessoryViewController) {
         super.addTitlebarAccessoryViewController(childViewController)
 
@@ -260,7 +293,13 @@ class TerminalWindow: NSWindow {
         // it. This has been verified to work on macOS 12 to 26
         if isTabBar(childViewController) {
             childViewController.identifier = Self.tabBarIdentifier
-            tabBarDidAppear()
+
+            // With the tab sidebar the native tab bar is never shown.
+            if isTabSidebarActive {
+                childViewController.isHidden = true
+            } else {
+                tabBarDidAppear()
+            }
         }
     }
 
@@ -302,7 +341,7 @@ class TerminalWindow: NSWindow {
         return childViewController.identifier == Self.tabBarIdentifier
     }
 
-    private func tabBarDidAppear() {
+    func tabBarDidAppear() {
         // Remove our reset zoom accessory. For some reason having a SwiftUI
         // titlebar accessory causes our content view scaling to be wrong.
         // Removing it fixes it, we just need to remember to add it again later.
@@ -314,7 +353,7 @@ class TerminalWindow: NSWindow {
         // everything works fine.
     }
 
-    private func tabBarDidDisappear() {
+    func tabBarDidDisappear() {
         if styleMask.contains(.titled) {
             if titlebarAccessoryViewControllers.firstIndex(of: resetZoomAccessory) == nil {
                 addTitlebarAccessoryViewController(resetZoomAccessory)
@@ -326,6 +365,8 @@ class TerminalWindow: NSWindow {
 
     var keyEquivalent: String? {
         didSet {
+            if keyEquivalent != oldValue { postTabSidebarItemDidChange() }
+
             // When our key equivalent is set, we must update the tab label.
             guard let keyEquivalent else {
                 keyEquivalentLabel.attributedStringValue = NSAttributedString()
@@ -357,6 +398,7 @@ class TerminalWindow: NSWindow {
             // Show/hide our reset zoom button depending on if we're zoomed.
             // We want to show it if we are zoomed.
             resetZoomTabButton.isHidden = !surfaceIsZoomed
+            if surfaceIsZoomed != oldValue { postTabSidebarItemDidChange() }
 
             DispatchQueue.main.async {
                 self.viewModel.isSurfaceZoomed = self.surfaceIsZoomed
@@ -557,6 +599,8 @@ class TerminalWindow: NSWindow {
             let backgroundColor = preferredBackgroundColor ?? NSColor(surfaceConfig.backgroundColor)
             self.backgroundColor = backgroundColor.withAlphaComponent(1)
         }
+
+        syncTabSidebarTitlebarColor(surfaceConfig)
     }
 
     /// The preferred window background color. The current window background color may not be set

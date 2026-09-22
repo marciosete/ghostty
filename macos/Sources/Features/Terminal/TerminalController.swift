@@ -480,6 +480,14 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             default:
                 tabCreated = parent.addTabbedWindowSafely(window, ordered: .above)
             }
+            // A tab opened right after a grouped tab joins that group, which also
+            // keeps the group's tabs next to each other.
+            if tabCreated,
+               ghostty.config.windowNewTabPosition != "end",
+               let groupID = (parent as? TerminalWindow)?.userTabGroupID {
+                (window as? TerminalWindow)?.userTabGroupID = groupID
+            }
+
             if tabCreated {
                 // We set the selectedWindow early here because we want the next window
                 // to become first responder as quickly as possible. Usually this is
@@ -1017,6 +1025,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let tabIndex: Int?
         weak var tabGroup: NSWindowTabGroup?
         let tabColor: TerminalTabColor
+        let userTabGroupID: UUID?
     }
 
     convenience init(_ ghostty: Ghostty.App, with undoState: UndoState) {
@@ -1028,6 +1037,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             window.setFrame(undoState.frame, display: true)
             if let terminalWindow = window as? TerminalWindow {
                 terminalWindow.tabColor = undoState.tabColor
+                if let groupID = undoState.userTabGroupID, UserTabGroupStore.shared[groupID] != nil {
+                    terminalWindow.userTabGroupID = groupID
+                }
             }
 
             // If we have a tab group and index, restore the tab to its original position
@@ -1072,7 +1084,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             focusedSurface: focusedSurface?.id,
             tabIndex: window.tabGroup?.windows.firstIndex(of: window),
             tabGroup: window.tabGroup,
-            tabColor: (window as? TerminalWindow)?.tabColor ?? .none)
+            tabColor: (window as? TerminalWindow)?.tabColor ?? .none,
+            userTabGroupID: (window as? TerminalWindow)?.userTabGroupID)
     }
 
     // MARK: - NSWindowController
@@ -1107,9 +1120,19 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             focusedSurface = view
         }
 
-        // Initialize our content view to the SwiftUI root
-        let container = TerminalViewContainer {
-            TerminalView(ghostty: ghostty, viewModel: self, delegate: self)
+        // Initialize our content view to the SwiftUI root. Terminal windows show
+        // the vertical tab sidebar next to the terminal when it is enabled.
+        let container: TerminalViewContainer
+        if let terminalWindow = window as? TerminalWindow, terminalWindow.supportsTabSidebar {
+            container = TerminalViewContainer {
+                TabSidebarContainerView(model: terminalWindow.tabSidebarModel) {
+                    TerminalView(ghostty: ghostty, viewModel: self, delegate: self)
+                }
+            }
+        } else {
+            container = TerminalViewContainer {
+                TerminalView(ghostty: ghostty, viewModel: self, delegate: self)
+            }
         }
 
         // Set the initial content size on the container so that
@@ -1119,6 +1142,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         container.initialContentSize = focusedSurface?.initialSize
 
         window.contentView = container
+        (window as? TerminalWindow)?.syncTabSidebarTitlebarHeight()
 
         // If we have a default size, we want to apply it.
         if let defaultSize {
@@ -1395,6 +1419,23 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         ) {
             self.closeTabsOnTheRightImmediately()
         }
+    }
+
+    /// Shows or hides the vertical tab sidebar in all windows.
+    @IBAction func toggleTabSidebar(_ sender: Any?) {
+        let settings = TabSidebarSettings.shared
+        guard settings.isEnabled else {
+            settings.isEnabled = true
+            settings.isCollapsed = false
+            return
+        }
+
+        settings.isCollapsed.toggle()
+    }
+
+    /// Switches between the vertical tab sidebar and the native tab bar.
+    @IBAction func toggleVerticalTabs(_ sender: Any?) {
+        TabSidebarSettings.shared.isEnabled.toggle()
     }
 
     @IBAction func returnToDefaultSize(_ sender: Any?) {
@@ -1709,6 +1750,15 @@ extension TerminalController {
             guard let window, let tabGroup = window.tabGroup else { return false }
             guard let currentIndex = tabGroup.windows.firstIndex(of: window) else { return false }
             return tabGroup.windows.indices.contains { $0 > currentIndex }
+
+        case #selector(toggleTabSidebar):
+            let settings = TabSidebarSettings.shared
+            item.title = settings.isEnabled && !settings.isCollapsed ? "Hide Tab Sidebar" : "Show Tab Sidebar"
+            return (window as? TerminalWindow)?.supportsTabSidebar ?? false
+
+        case #selector(toggleVerticalTabs):
+            item.state = TabSidebarSettings.shared.isEnabled ? .on : .off
+            return (window as? TerminalWindow)?.supportsTabSidebar ?? false
 
         case #selector(returnToDefaultSize):
             guard let window else { return false }

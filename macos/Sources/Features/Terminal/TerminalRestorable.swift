@@ -76,6 +76,9 @@ final class TerminalRestorableState: TerminalRestorable {
     var titleOverride: String? {
         internalState.titleOverride
     }
+    var userTabGroup: UserTabGroup? {
+        internalState.userTabGroup
+    }
 
     /// Internal State we use to perform unit tests
     ///
@@ -170,6 +173,12 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
 
         // Restore the tab title override
         c.titleOverride = state.titleOverride
+
+        // Restore the tab's group in the tab sidebar
+        if let group = state.userTabGroup {
+            UserTabGroupStore.shared.register(group)
+            (window as? TerminalWindow)?.userTabGroupID = group.id
+        }
 
         // Setup our restored state on the controller
         // Find the focused surface in surfaceTree

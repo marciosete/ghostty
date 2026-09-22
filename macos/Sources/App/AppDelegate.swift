@@ -229,8 +229,17 @@ class AppDelegate: NSObject,
         // Initial config loading
         ghosttyConfigDidChange(config: ghostty.config)
 
-        // Start our update checker.
-        updateController.startUpdater()
+        // Add the tab sidebar items to the View menu.
+        installTabSidebarMenuItems()
+
+        // Start our update checker. Builds installed under another bundle ID (such as a
+        // personal fork) must never update from the official feed, since that would
+        // replace them with the official release.
+        if Bundle.main.bundleIdentifier?.hasPrefix("com.mitchellh.ghostty") ?? false {
+            updateController.startUpdater()
+        } else {
+            menuCheckForUpdates?.isHidden = true
+        }
 
         // Register our service provider. This must happen after everything is initialized.
         NSApp.servicesProvider = ServiceProvider()
