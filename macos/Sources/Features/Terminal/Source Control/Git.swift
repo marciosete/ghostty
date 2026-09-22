@@ -35,7 +35,21 @@ struct GitFileChange: Hashable {
 
 /// The state of a repository's working tree and index.
 struct GitStatus: Equatable {
+    /// The checked out branch, or nil when HEAD is detached.
     var branch: String?
+
+    /// The checked out commit, or nil before the first commit.
+    var commit: String?
+
+    /// The branch's upstream (e.g. `origin/main`), if it has one.
+    var upstream: String?
+
+    /// Commits on the branch that aren't on its upstream, i.e. to push.
+    var ahead = 0
+
+    /// Commits on the upstream that aren't on the branch, i.e. to pull. This is only
+    /// as current as the last fetch.
+    var behind = 0
 
     /// Changes in the index, i.e. what will be committed.
     var staged: [GitFileChange] = []
@@ -111,9 +125,27 @@ enum Git {
 
             switch token.first {
             case "#":
-                let prefix = "# branch.head "
-                if token.hasPrefix(prefix) {
-                    status.branch = String(token.dropFirst(prefix.count))
+                // # branch.oid <commit> | (initial)
+                // # branch.head <branch> | (detached)
+                // # branch.upstream <upstream>
+                // # branch.ab +<ahead> -<behind>
+                let fields = token.split(separator: " ", maxSplits: 2)
+                guard fields.count == 3 else { continue }
+                let value = String(fields[2])
+                switch fields[1] {
+                case "branch.oid":
+                    status.commit = value == "(initial)" ? nil : value
+                case "branch.head":
+                    status.branch = value == "(detached)" ? nil : value
+                case "branch.upstream":
+                    status.upstream = value
+                case "branch.ab":
+                    for count in value.split(separator: " ") {
+                        if count.hasPrefix("+") { status.ahead = Int(count.dropFirst()) ?? 0 }
+                        if count.hasPrefix("-") { status.behind = Int(count.dropFirst()) ?? 0 }
+                    }
+                default:
+                    break
                 }
 
             case "1":

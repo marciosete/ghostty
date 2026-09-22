@@ -31,21 +31,12 @@ struct SourceControlPanelView: View {
                 .foregroundStyle(.secondary)
 
             if case let .ready(repository, status) = model.state {
-                HStack(spacing: 4) {
-                    Text(repository.root.lastPathComponent)
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
-                    if let branch = status.branch {
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                        Text(branch)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .help(repository.root.path)
+                Text(repository.root.lastPathComponent)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .help(repository.root.path)
+
+                SourceControlBranchView(status: status)
             }
         }
         .padding(.horizontal, 12)
@@ -140,6 +131,55 @@ struct SourceControlPanelView: View {
                     }
                     .onEnded { _ in resizeStartWidth = nil }
             )
+    }
+}
+
+// MARK: - Branch
+
+/// The branch line, as in VS Code's status bar: `main*  18↓ 1↑`. The `*` means there
+/// are uncommitted changes, and the counts are commits to pull and to push.
+private struct SourceControlBranchView: View {
+    let status: GitStatus
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 10))
+
+            Text(name + (isDirty ? "*" : ""))
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            if status.upstream != nil && (status.ahead > 0 || status.behind > 0) {
+                Text("\(status.behind)↓ \(status.ahead)↑")
+                    .monospacedDigit()
+                    .padding(.leading, 6)
+            }
+        }
+        .foregroundStyle(.secondary)
+        .help(help)
+    }
+
+    private var isDirty: Bool {
+        !status.staged.isEmpty || !status.unstaged.isEmpty
+    }
+
+    /// The branch, or the short commit when HEAD is detached.
+    private var name: String {
+        if let branch = status.branch { return branch }
+        if let commit = status.commit { return String(commit.prefix(8)) }
+        return "HEAD"
+    }
+
+    private var help: String {
+        var lines = [status.branch.map { "Branch \($0)" } ?? "Detached HEAD at \(name)"]
+        if isDirty { lines.append("Uncommitted changes") }
+        if let upstream = status.upstream {
+            lines.append("\(status.behind) to pull, \(status.ahead) to push (\(upstream), as of the last fetch)")
+        } else if status.branch != nil {
+            lines.append("No upstream branch")
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
