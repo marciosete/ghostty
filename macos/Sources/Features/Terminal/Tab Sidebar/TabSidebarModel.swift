@@ -375,8 +375,10 @@ final class TabSidebarModel: ObservableObject {
                 hostController.undoManager?.endUndoGrouping()
             }
 
-            for controller in controllers {
-                controller.closeTabImmediately(registerRedo: false)
+            TerminalWorkspace.shared.closeWindows {
+                for controller in controllers {
+                    controller.closeTabImmediately(registerRedo: false)
+                }
             }
         }
 

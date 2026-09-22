@@ -232,6 +232,9 @@ class AppDelegate: NSObject,
         // Add the tab sidebar items to the View menu.
         installTabSidebarMenuItems()
 
+        // Keep the open windows and tabs saved so they can be opened again.
+        TerminalWorkspace.shared.start(ghostty)
+
         // Start our update checker. Builds installed under another bundle ID (such as a
         // personal fork) must never update from the official feed, since that would
         // replace them with the official release.
@@ -382,9 +385,13 @@ class AppDelegate: NSObject,
             // is possible to have other windows in a few scenarios:
             //   - if we're opening a URL since `application(_:openFile:)` is called before this.
             //   - if we're restoring from persisted state
-            if TerminalController.all.isEmpty && derivedConfig.initialWindow {
+            //   - if we reopened the saved workspace
+            if derivedConfig.initialWindow {
                 undoManager.disableUndoRegistration()
-                _ = TerminalController.newWindow(ghostty)
+                TerminalWorkspace.shared.restoreAtLaunch()
+                if TerminalController.all.isEmpty {
+                    _ = TerminalController.newWindow(ghostty)
+                }
                 undoManager.enableUndoRegistration()
             }
         }
@@ -397,6 +404,10 @@ class AppDelegate: NSObject,
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let windows = NSApplication.shared.windows
         if windows.isEmpty { return .terminateNow }
+
+        // The open windows are saved and open again on the next launch, so quitting
+        // doesn't need to be confirmed.
+        if TerminalWorkspace.shared.saveBeforeQuitting() { return .terminateNow }
 
         // If we've already accepted to install an update, then we don't need to
         // confirm quit. The user is already expecting the update to happen.
@@ -453,8 +464,10 @@ class AppDelegate: NSObject,
         // but I haven't seen it happen in releases. I'm unsure why.
         guard applicationHasBecomeActive else { return true }
 
-        // No visible windows, open a new one.
-        _ = TerminalController.newWindow(ghostty)
+        // No visible windows. Reopen the saved workspace, or open a new window.
+        if !TerminalWorkspace.shared.restore() {
+            _ = TerminalController.newWindow(ghostty)
+        }
         return false
     }
 

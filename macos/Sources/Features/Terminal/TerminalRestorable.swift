@@ -108,6 +108,34 @@ final class TerminalRestorableState: TerminalRestorable {
     func encode(to encoder: any Encoder) throws {
         try internalState.encode(to: encoder)
     }
+
+    /// Applies the saved tab state to a controller created with `surfaceTree`. Fullscreen
+    /// is left to the caller.
+    func apply(to c: TerminalController) {
+        guard let window = c.window else { return }
+
+        // Restore our tab color and avoid unnecessary `invalidateRestorableState` calls
+        if let tabColor {
+            (window as? TerminalWindow)?.tabColor = tabColor
+        }
+
+        // Restore the tab title override
+        c.titleOverride = titleOverride
+
+        // Restore the tab's group in the tab sidebar
+        if let userTabGroup {
+            UserTabGroupStore.shared.register(userTabGroup)
+            (window as? TerminalWindow)?.userTabGroupID = userTabGroup.id
+        }
+
+        // Setup our restored state on the controller
+        // Find the focused surface in surfaceTree
+        if let focusedSurface,
+           let view = c.surfaceTree.first(where: { $0.id.uuidString == focusedSurface }) {
+            c.focusedSurface = view
+            TerminalWindowRestoration.restoreFocus(to: view, inWindow: window)
+        }
+    }
 }
 
 enum TerminalRestoreError: Error {
@@ -120,6 +148,9 @@ enum TerminalRestoreError: Error {
 /// The NSWindowRestoration implementation that is called when a terminal window needs to be restored.
 /// The encoding of a terminal window is handled elsewhere (usually NSWindowDelegate).
 class TerminalWindowRestoration: NSObject, NSWindowRestoration {
+    /// True once macOS has restored a terminal window during this launch.
+    private(set) static var hasRestoredWindows = false
+
     static func restoreWindow(
         withIdentifier identifier: NSUserInterfaceItemIdentifier,
         state: NSCoder,
@@ -166,35 +197,9 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
             return
         }
 
-        // Restore our tab color and avoid unnecessary `invalidateRestorableState` calls
-        if let tabColor = state.tabColor {
-            (window as? TerminalWindow)?.tabColor = tabColor
-        }
+        state.apply(to: c)
 
-        // Restore the tab title override
-        c.titleOverride = state.titleOverride
-
-        // Restore the tab's group in the tab sidebar
-        if let group = state.userTabGroup {
-            UserTabGroupStore.shared.register(group)
-            (window as? TerminalWindow)?.userTabGroupID = group.id
-        }
-
-        // Setup our restored state on the controller
-        // Find the focused surface in surfaceTree
-        if let focusedStr = state.focusedSurface {
-            var foundView: Ghostty.SurfaceView?
-            for view in c.surfaceTree where view.id.uuidString == focusedStr {
-                foundView = view
-                break
-            }
-
-            if let view = foundView {
-                c.focusedSurface = view
-                restoreFocus(to: view, inWindow: window)
-            }
-        }
-
+        hasRestoredWindows = true
         completionHandler(window, nil)
         guard let mode = state.effectiveFullscreenMode, mode != .native else {
             // We let AppKit handle native fullscreen
@@ -208,7 +213,7 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
     /// This restores the focus state of the surfaceview within the given window. When restoring,
     /// the view isn't immediately attached to the window since we have to wait for SwiftUI to
     /// catch up. Therefore, we sit in an async loop waiting for the attachment to happen.
-    private static func restoreFocus(to: Ghostty.SurfaceView, inWindow: NSWindow, attempts: Int = 0) {
+    fileprivate static func restoreFocus(to: Ghostty.SurfaceView, inWindow: NSWindow, attempts: Int = 0) {
         // For the first attempt, we schedule it immediately. Subsequent events wait a bit
         // so we don't just spin the CPU at 100%. Give up after some period of time.
         let after: DispatchTime

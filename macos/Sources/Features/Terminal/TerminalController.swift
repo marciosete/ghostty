@@ -727,6 +727,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         cancelPendingInitialPresentation()
+        TerminalWorkspace.shared.windowsWillClose()
 
         // Undo
         if let undoManager, let undoState {
@@ -847,6 +848,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         guard let window = window else { return }
 
         cancelPendingInitialPresentation()
+        TerminalWorkspace.shared.windowsWillClose()
 
         registerUndoForCloseWindow()
 
@@ -1010,7 +1012,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     static private func closeAllWindowsImmediately() {
         let undoManager = (NSApp.delegate as? AppDelegate)?.undoManager
         undoManager?.beginUndoGrouping()
-        all.forEach { $0.closeWindowImmediately() }
+        TerminalWorkspace.shared.closeWindows {
+            all.forEach { $0.closeWindowImmediately() }
+        }
         undoManager?.setActionName("Close All Windows")
         undoManager?.endUndoGrouping()
     }
