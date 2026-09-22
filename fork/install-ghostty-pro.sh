@@ -7,12 +7,15 @@
 #     saved windows and Dock/⌘Tab entry
 #   - uses Ghostty's Blueprint icon so it's easy to tell apart
 #   - never auto-updates (a fork must not update from the official feed)
+#   - signed with a stable local certificate, so macOS privacy answers (Photos,
+#     Documents, ...) survive reinstalls. Create it once with
+#     fork/create-signing-identity.sh; without it the app is signed ad hoc.
 #
 # It still reads the same Ghostty config file as the official app.
 #
 # Usage: fork/install-ghostty-pro.sh
 #
-# Override with APP_NAME, BUNDLE_ID or DEST, e.g. DEST=~/Applications.
+# Override with APP_NAME, BUNDLE_ID, DEST or SIGN_IDENTITY, e.g. DEST=~/Applications.
 
 set -euo pipefail
 
@@ -22,6 +25,7 @@ APP_NAME="${APP_NAME:-Ghostty Pro}"
 # keeps saved windows and preferences across renames.
 BUNDLE_ID="${BUNDLE_ID:-com.marciosete.terminal-pro}"
 DEST="${DEST:-/Applications}"
+SIGN_IDENTITY="${SIGN_IDENTITY:-Ghostty Pro Local Signing}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="$DEST/$APP_NAME.app"
@@ -90,10 +94,20 @@ iconutil -c icns "$ICONSET" -o "$STAGED/Contents/Resources/GhosttyPro.icns"
 "$PLISTBUDDY" -c "Set :CFBundleIconFile GhosttyPro" "$PLIST"
 "$PLISTBUDDY" -c "Delete :CFBundleIconName" "$PLIST" 2>/dev/null || true
 
-echo "==> Re-signing (ad hoc)"
+# macOS ties privacy answers to the signature. An ad hoc one changes with every
+# build, so it would ask again after each install.
+if security find-identity -p codesigning | grep -qF "\"$SIGN_IDENTITY\""; then
+    SIGN_WITH="$SIGN_IDENTITY"
+else
+    echo "warning: no \"$SIGN_IDENTITY\" signing identity; signing ad hoc." >&2
+    echo "         Run fork/create-signing-identity.sh to keep privacy permissions across installs." >&2
+    SIGN_WITH=-
+fi
+
+echo "==> Re-signing (${SIGN_WITH/#-/ad hoc})"
 # Changing Info.plist invalidates the signature. Keep the entitlements the build
 # signed with.
-codesign --force --deep --sign - \
+codesign --force --deep --sign "$SIGN_WITH" \
     --preserve-metadata=entitlements,flags,runtime \
     "$STAGED"
 codesign --verify --deep --strict "$STAGED"
