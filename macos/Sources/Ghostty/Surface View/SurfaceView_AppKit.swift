@@ -219,6 +219,12 @@ extension Ghostty {
         // by the user, this is set to the prior value (which may be empty, but non-nil).
         private var titleFromTerminal: String?
 
+        /// The Claude Code session this surface was restored with, and until when it is saved
+        /// again in place of the running one. Claude Code takes a moment to start and
+        /// register, especially with many terminals resuming at once, and a save in between
+        /// mustn't lose the session.
+        private var restoredClaudeCodeSession: (session: ClaudeCodeSession, until: Date)?
+
         // The cached contents of the screen.
         private(set) var cachedScreenContents: CachedValue<String>
         private(set) var cachedVisibleContents: CachedValue<String>
@@ -1859,11 +1865,70 @@ extension Ghostty {
 
         // MARK: - Codable
 
-        enum CodingKeys: String, CodingKey {
-            case pwd
-            case uuid
-            case title
-            case isUserSetTitle
+        /// What is saved of a surface to open it again later.
+        struct RestorableState: Codable {
+            var pwd: String?
+            var uuid: UUID?
+            var title: String?
+            var isUserSetTitle: Bool
+
+            /// The Claude Code session running in the surface, resumed when it opens again.
+            var claudeCodeSession: ClaudeCodeSession?
+
+            enum CodingKeys: String, CodingKey {
+                case pwd
+                case uuid
+                case title
+                case isUserSetTitle
+                case claudeCodeSession
+            }
+
+            init(
+                pwd: String?,
+                uuid: UUID?,
+                title: String?,
+                isUserSetTitle: Bool,
+                claudeCodeSession: ClaudeCodeSession?
+            ) {
+                self.pwd = pwd
+                self.uuid = uuid
+                self.title = title
+                self.isUserSetTitle = isUserSetTitle
+                self.claudeCodeSession = claudeCodeSession
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                uuid = UUID(uuidString: try container.decode(String.self, forKey: .uuid))
+                pwd = try container.decode(String?.self, forKey: .pwd)
+                title = try container.decodeIfPresent(String.self, forKey: .title)
+                isUserSetTitle = try container.decodeIfPresent(Bool.self, forKey: .isUserSetTitle) ?? false
+                // A session that can't be read is left out rather than failing the restore.
+                claudeCodeSession = try? container.decodeIfPresent(ClaudeCodeSession.self, forKey: .claudeCodeSession)
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(pwd, forKey: .pwd)
+                try container.encodeIfPresent(uuid?.uuidString, forKey: .uuid)
+                try container.encodeIfPresent(title, forKey: .title)
+                try container.encode(isUserSetTitle, forKey: .isUserSetTitle)
+                try container.encodeIfPresent(claudeCodeSession, forKey: .claudeCodeSession)
+            }
+
+            /// The configuration that opens the surface again. A Claude Code session is resumed
+            /// in the directory it was started in, where Claude Code looks for it.
+            var surfaceConfiguration: SurfaceConfiguration {
+                var config = SurfaceConfiguration()
+                if let claudeCodeSession {
+                    config.workingDirectory = claudeCodeSession.cwd
+                    config.initialInput = claudeCodeSession.resumeInput
+                    config.environmentVariables = claudeCodeSession.resumeEnvironment
+                } else {
+                    config.workingDirectory = pwd
+                }
+                return config
+            }
         }
 
         required convenience init(from decoder: Decoder) throws {
@@ -1874,31 +1939,47 @@ extension Ghostty {
                 throw TerminalRestoreError.delegateInvalid
             }
 
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            let uuid = UUID(uuidString: try container.decode(String.self, forKey: .uuid))
-            var config = Ghostty.SurfaceConfiguration()
-            config.workingDirectory = try container.decode(String?.self, forKey: .pwd)
-            let savedTitle = try container.decodeIfPresent(String.self, forKey: .title)
-            let isUserSetTitle = try container.decodeIfPresent(Bool.self, forKey: .isUserSetTitle) ?? false
-
-            self.init(app, baseConfig: config, uuid: uuid)
+            let state = try RestorableState(from: decoder)
+            self.init(app, baseConfig: state.surfaceConfiguration, uuid: state.uuid)
 
             // Restore the saved title after initialization
-            if let title = savedTitle {
+            if let title = state.title {
                 self.title = title
                 // If this was a user-set title, we need to prevent it from being overwritten
-                if isUserSetTitle {
+                if state.isUserSetTitle {
                     self.titleFromTerminal = title
                 }
+            }
+
+            if let session = state.claudeCodeSession {
+                restoredClaudeCodeSession = (session, Date().addingTimeInterval(60))
             }
         }
 
         func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(pwd, forKey: .pwd)
-            try container.encode(id.uuidString, forKey: .uuid)
-            try container.encode(title, forKey: .title)
-            try container.encode(titleFromTerminal != nil, forKey: .isUserSetTitle)
+            try RestorableState(
+                pwd: pwd,
+                uuid: id,
+                title: title,
+                isUserSetTitle: titleFromTerminal != nil,
+                claudeCodeSession: claudeCodeSessionToSave()
+            ).encode(to: encoder)
+        }
+
+        /// The Claude Code session to resume when the surface opens again. Claude Code leads
+        /// its own process group and stays in the foreground while it works.
+        private func claudeCodeSessionToSave() -> ClaudeCodeSession? {
+            if let pid = surfaceModel?.foregroundPID,
+               let session = ClaudeCodeSession.running(pid: pid) {
+                restoredClaudeCodeSession = nil
+                return session
+            }
+
+            guard let restored = restoredClaudeCodeSession, restored.until > Date() else {
+                restoredClaudeCodeSession = nil
+                return nil
+            }
+            return restored.session
         }
     }
 }
