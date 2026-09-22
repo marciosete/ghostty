@@ -37,6 +37,12 @@ extension TerminalWindow {
             .sink { [weak self] _ in self?.syncTabSidebarToggleButton() }
             .store(in: &tabSidebarState.cancellables)
 
+        // The source control panel only watches its repository while it's shown.
+        SourceControlSettings.shared.$isVisible
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] visible in self?.sourceControlModel.setVisible(visible) }
+            .store(in: &tabSidebarState.cancellables)
+
         // The titlebar height changes with the style mask, toolbars and fullscreen.
         tabSidebarState.contentLayoutObservation = observe(\.contentLayoutRect, options: []) { window, _ in
             DispatchQueue.main.async { window.syncTabSidebarTitlebarHeight() }

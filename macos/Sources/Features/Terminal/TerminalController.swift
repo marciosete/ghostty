@@ -1125,7 +1125,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let container: TerminalViewContainer
         if let terminalWindow = window as? TerminalWindow, terminalWindow.supportsTabSidebar {
             container = TerminalViewContainer {
-                TabSidebarContainerView(model: terminalWindow.tabSidebarModel) {
+                TabSidebarContainerView(
+                    model: terminalWindow.tabSidebarModel,
+                    sourceControl: terminalWindow.sourceControlModel
+                ) {
                     TerminalView(ghostty: ghostty, viewModel: self, delegate: self)
                 }
             }
@@ -1438,6 +1441,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         TabSidebarSettings.shared.isEnabled.toggle()
     }
 
+    /// Shows or hides the source control panel in all windows.
+    @IBAction func toggleSourceControl(_ sender: Any?) {
+        SourceControlSettings.shared.isVisible.toggle()
+    }
+
     @IBAction func returnToDefaultSize(_ sender: Any?) {
         guard let window, let defaultSize else { return }
         defaultSize.apply(to: window)
@@ -1527,6 +1535,15 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // currently focused surface.
         guard let focusedSurface else { return }
         syncAppearance(focusedSurface.derivedConfig)
+
+        // The source control panel shows the repository of the focused terminal's
+        // working directory. This also fires right away with the current directory.
+        focusedSurface.$pwd
+            .removeDuplicates()
+            .sink { [weak self] pwd in
+                (self?.window as? TerminalWindow)?.sourceControlModel.setDirectory(pwd)
+            }
+            .store(in: &surfaceAppearanceCancellables)
 
         // We also want to get notified of certain changes to update our appearance.
         focusedSurface.$derivedConfig
@@ -1758,6 +1775,10 @@ extension TerminalController {
 
         case #selector(toggleVerticalTabs):
             item.state = TabSidebarSettings.shared.isEnabled ? .on : .off
+            return (window as? TerminalWindow)?.supportsTabSidebar ?? false
+
+        case #selector(toggleSourceControl):
+            item.title = SourceControlSettings.shared.isVisible ? "Hide Source Control" : "Show Source Control"
             return (window as? TerminalWindow)?.supportsTabSidebar ?? false
 
         case #selector(returnToDefaultSize):

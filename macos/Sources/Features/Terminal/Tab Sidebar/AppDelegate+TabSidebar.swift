@@ -19,8 +19,16 @@ extension AppDelegate {
             action: #selector(TerminalController.toggleVerticalTabs(_:)),
             keyEquivalent: "")
 
+        let toggleSourceControl = NSMenuItem(
+            title: "Show Source Control",
+            action: #selector(TerminalController.toggleSourceControl(_:)),
+            keyEquivalent: "l")
+        toggleSourceControl.keyEquivalentModifierMask = [.command]
+        toggleSourceControl.setImageIfDesired(systemSymbolName: "arrow.triangle.branch")
+
         viewMenu.insertItem(toggleSidebar, at: 0)
         viewMenu.insertItem(verticalTabs, at: 1)
-        viewMenu.insertItem(.separator(), at: 2)
+        viewMenu.insertItem(toggleSourceControl, at: 2)
+        viewMenu.insertItem(.separator(), at: 3)
     }
 }

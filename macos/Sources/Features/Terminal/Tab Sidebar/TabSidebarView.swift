@@ -11,10 +11,17 @@ import UniformTypeIdentifiers
 struct TabSidebarContainerView<Content: View>: View {
     @ObservedObject var model: TabSidebarModel
     @ObservedObject var settings = TabSidebarSettings.shared
+    let sourceControl: SourceControlPanelModel
+    @ObservedObject var sourceControlSettings = SourceControlSettings.shared
     let content: Content
 
-    init(model: TabSidebarModel, @ViewBuilder content: () -> Content) {
+    init(
+        model: TabSidebarModel,
+        sourceControl: SourceControlPanelModel,
+        @ViewBuilder content: () -> Content
+    ) {
         self.model = model
+        self.sourceControl = sourceControl
         self.content = content()
     }
 
@@ -25,9 +32,7 @@ struct TabSidebarContainerView<Content: View>: View {
                     TabSidebarView(model: model, topInset: model.titlebarHeight)
                         .frame(width: settings.width)
 
-                    Rectangle()
-                        .fill(Color(nsColor: .separatorColor))
-                        .frame(width: 1)
+                    separator
                 }
 
                 VStack(spacing: 0) {
@@ -37,11 +42,31 @@ struct TabSidebarContainerView<Content: View>: View {
 
                     content
                 }
+
+                sourceControlPanel(topInset: model.titlebarHeight)
             }
             .ignoresSafeArea(.container, edges: .top)
         } else {
-            content
+            HStack(spacing: 0) {
+                content
+                sourceControlPanel(topInset: 0)
+            }
         }
+    }
+
+    @ViewBuilder
+    private func sourceControlPanel(topInset: CGFloat) -> some View {
+        if sourceControlSettings.isVisible {
+            separator
+            SourceControlPanelView(model: sourceControl, topInset: topInset)
+                .frame(width: sourceControlSettings.width)
+        }
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
     }
 }
 
@@ -480,7 +505,7 @@ private struct TabSidebarDropIndicator: View {
     }
 }
 
-private struct TabSidebarVisualEffectBackground: NSViewRepresentable {
+struct TabSidebarVisualEffectBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .sidebar
