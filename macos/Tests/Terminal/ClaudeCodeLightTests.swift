@@ -7,25 +7,25 @@ struct ClaudeCodeLightTests {
     // MARK: Status
 
     @Test func statusColors() {
-        #expect(ClaudeCodeLight(status: "busy", committed: false)?.tabColor == .blue)
-        #expect(ClaudeCodeLight(status: "idle", committed: false)?.tabColor == .yellow)
-        #expect(ClaudeCodeLight(status: "waiting", committed: false)?.tabColor == .red)
-        #expect(ClaudeCodeLight(status: "idle", committed: true)?.tabColor == .green)
+        #expect(ClaudeCodeLight(status: "busy", pending: false)?.tabColor == .blue)
+        #expect(ClaudeCodeLight(status: "idle", pending: true)?.tabColor == .yellow)
+        #expect(ClaudeCodeLight(status: "waiting", pending: false)?.tabColor == .red)
+        #expect(ClaudeCodeLight(status: "idle", pending: false)?.tabColor == .green)
     }
 
-    @Test func committedOnlyShowsOnceFinished() {
-        #expect(ClaudeCodeLight(status: "busy", committed: true) == .working)
-        #expect(ClaudeCodeLight(status: "waiting", committed: true) == .waiting)
+    @Test func pendingOnlyShowsOnceStopped() {
+        #expect(ClaudeCodeLight(status: "busy", pending: true) == .working)
+        #expect(ClaudeCodeLight(status: "waiting", pending: true) == .waiting)
     }
 
     @Test func unknownStatusShowsNothing() {
-        #expect(ClaudeCodeLight(status: "parked", committed: false) == nil)
+        #expect(ClaudeCodeLight(status: "parked", pending: false) == nil)
     }
 
     @Test func tabShowsTheSessionThatNeedsAttentionMost() {
-        #expect(ClaudeCodeLight.mostUrgent([.committed, .waiting, .working]) == .waiting)
-        #expect(ClaudeCodeLight.mostUrgent([.finished, .working]) == .working)
-        #expect(ClaudeCodeLight.mostUrgent([.committed, .finished]) == .finished)
+        #expect(ClaudeCodeLight.mostUrgent([.clean, .waiting, .working]) == .waiting)
+        #expect(ClaudeCodeLight.mostUrgent([.pending, .working]) == .working)
+        #expect(ClaudeCodeLight.mostUrgent([.clean, .pending]) == .pending)
         #expect(ClaudeCodeLight.mostUrgent([]) == nil)
     }
 
@@ -48,21 +48,13 @@ struct ClaudeCodeLightTests {
         #expect(TerminalTabColor.auto.rawValue == 10)
     }
 
-    // MARK: Commits
+    // MARK: Edited files
 
-    private static func toolUse(_ id: String, _ name: String, command: String? = nil) -> Data {
-        var input: [String: Any] = [:]
-        input["command"] = command
-        return line([
-            "type": "assistant",
-            "message": ["content": [["type": "tool_use", "id": id, "name": name, "input": input]]],
-        ])
-    }
-
-    private static func toolResult(_ id: String, isError: Bool = false) -> Data {
+    private static func toolUse(_ name: String, _ input: [String: Any], sidechain: Bool = false) -> Data {
         line([
-            "type": "user",
-            "message": ["content": [["type": "tool_result", "tool_use_id": id, "is_error": isError]]],
+            "type": "assistant",
+            "isSidechain": sidechain,
+            "message": ["content": [["type": "tool_use", "id": UUID().uuidString, "name": name, "input": input]]],
         ])
     }
 
@@ -70,43 +62,21 @@ struct ClaudeCodeLightTests {
         (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
     }
 
-    @Test func commitThatSucceeded() {
-        let tracker = ClaudeCodeCommitTracker()
-        tracker.consume(line: Self.toolUse("a", "Edit"))
-        tracker.consume(line: Self.toolUse("b", "Bash", command: "git commit -m 'fix: x'"))
-        #expect(!tracker.committed)
-        tracker.consume(line: Self.toolResult("b"))
-        #expect(tracker.committed)
+    @Test func collectsEditedFiles() {
+        let tracker = ClaudeCodeEditTracker()
+        tracker.consume(line: Self.toolUse("Edit", ["file_path": "/repo/a.swift"]))
+        tracker.consume(line: Self.toolUse("Write", ["file_path": "/repo/b.swift"]))
+        tracker.consume(line: Self.toolUse("MultiEdit", ["file_path": "/repo/a.swift"]))
+        tracker.consume(line: Self.toolUse("NotebookEdit", ["notebook_path": "/repo/c.ipynb"]))
+        #expect(tracker.files == ["/repo/a.swift", "/repo/b.swift", "/repo/c.ipynb"])
     }
 
-    @Test func commitThatFailed() {
-        let tracker = ClaudeCodeCommitTracker()
-        tracker.consume(line: Self.toolUse("b", "Bash", command: "git commit -m x"))
-        tracker.consume(line: Self.toolResult("b", isError: true))
-        #expect(!tracker.committed)
-    }
-
-    @Test func editAfterCommit() {
-        let tracker = ClaudeCodeCommitTracker()
-        tracker.consume(line: Self.toolUse("b", "Bash", command: "git commit -m x"))
-        tracker.consume(line: Self.toolResult("b"))
-        tracker.consume(line: Self.toolUse("c", "Write"))
-        #expect(!tracker.committed)
-    }
-
-    @Test func otherCommandsDontCount() {
-        let tracker = ClaudeCodeCommitTracker()
-        tracker.consume(line: Self.toolUse("b", "Bash", command: "git status"))
-        tracker.consume(line: Self.toolResult("b"))
-        #expect(!tracker.committed)
-    }
-
-    @Test func commitCommands() {
-        #expect(ClaudeCodeCommitTracker.isCommit("git commit -m x"))
-        #expect(ClaudeCodeCommitTracker.isCommit("git -C /repo commit -F - <<'MSG'"))
-        #expect(ClaudeCodeCommitTracker.isCommit("git add a.swift && git commit -m x"))
-        #expect(!ClaudeCodeCommitTracker.isCommit("git log --grep commit"))
-        #expect(!ClaudeCodeCommitTracker.isCommit("git status; echo commit"))
+    @Test func ignoresReadsCommandsAndSubagents() {
+        let tracker = ClaudeCodeEditTracker()
+        tracker.consume(line: Self.toolUse("Read", ["file_path": "/repo/a.swift"]))
+        tracker.consume(line: Self.toolUse("Bash", ["command": "touch /repo/b.swift"]))
+        tracker.consume(line: Self.toolUse("Edit", ["file_path": "/repo/c.swift"], sidechain: true))
+        #expect(tracker.files.isEmpty)
     }
 
     @Test func readsOnlyWhatWasAdded() throws {
@@ -114,22 +84,67 @@ struct ClaudeCodeLightTests {
             .appendingPathComponent("claude-code-light-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
 
-        var contents = Self.toolUse("b", "Bash", command: "git commit -m x") + Data("\n".utf8)
+        var contents = Self.toolUse("Edit", ["file_path": "/repo/a.swift"]) + Data("\n".utf8)
         try contents.write(to: url)
-        let tracker = ClaudeCodeCommitTracker()
+        let tracker = ClaudeCodeEditTracker()
         tracker.update(from: url)
-        #expect(!tracker.committed)
+        #expect(tracker.files == ["/repo/a.swift"])
 
         // A line still being written is read once it is complete.
-        let result = Self.toolResult("b")
-        contents += result.prefix(10)
+        let next = Self.toolUse("Write", ["file_path": "/repo/b.swift"])
+        contents += next.prefix(10)
         try contents.write(to: url)
         tracker.update(from: url)
-        #expect(!tracker.committed)
+        #expect(tracker.files == ["/repo/a.swift"])
 
-        contents += result.dropFirst(10) + Data("\n".utf8)
+        contents += next.dropFirst(10) + Data("\n".utf8)
         try contents.write(to: url)
         tracker.update(from: url)
-        #expect(tracker.committed)
+        #expect(tracker.files == ["/repo/a.swift", "/repo/b.swift"])
+    }
+
+    // MARK: Git
+
+    private static func git(_ arguments: [String], in directory: URL) throws {
+        let process = Process()
+        process.executableURL = Git.executableURL
+        process.arguments = ["-c", "user.name=Test", "-c", "user.email=test@example.com"] + arguments
+        process.currentDirectoryURL = directory
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
+    @Test func uncommittedChangesOfTheGivenFilesOnly() throws {
+        let made = FileManager.default.temporaryDirectory.appendingPathComponent("claude-code-light-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: made) }
+
+        try Self.git(["init", "-q"], in: made)
+        let repository = try #require(Git.repository(containing: made))
+        let root = repository.root
+        let mine = root.appendingPathComponent("mine [1].swift").path
+        let other = root.appendingPathComponent("other.swift").path
+
+        // A new file is pending until it is committed.
+        try Data("a".utf8).write(to: URL(fileURLWithPath: mine))
+        #expect(Git.hasUncommittedChanges([mine], in: repository) == true)
+        try Self.git(["add", "."], in: root)
+        #expect(Git.hasUncommittedChanges([mine], in: repository) == true)
+        try Self.git(["commit", "-q", "-m", "first"], in: root)
+        #expect(Git.hasUncommittedChanges([mine], in: repository) == false)
+
+        // Another session's changes don't count.
+        try Data("b".utf8).write(to: URL(fileURLWithPath: other))
+        #expect(Git.hasUncommittedChanges([mine], in: repository) == false)
+
+        // Neither does a file outside the repository, or no file at all.
+        #expect(Git.hasUncommittedChanges(["/elsewhere/x.swift"], in: repository) == false)
+        #expect(Git.hasUncommittedChanges([], in: repository) == false)
+
+        try Data("c".utf8).write(to: URL(fileURLWithPath: mine))
+        #expect(Git.hasUncommittedChanges([mine], in: repository) == true)
     }
 }

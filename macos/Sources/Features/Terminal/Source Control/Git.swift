@@ -179,6 +179,25 @@ enum Git {
         return status
     }
 
+    /// Whether any of `files` (absolute paths inside `repository`) has changes that aren't
+    /// committed: modified, staged, added or deleted. Returns nil if git fails.
+    static func hasUncommittedChanges(_ files: [String], in repository: Repository) -> Bool? {
+        guard !files.isEmpty else { return false }
+        let root = repository.root.path + "/"
+        let pathspecs = files.compactMap { file -> String? in
+            guard file.hasPrefix(root) else { return nil }
+            // Literal, so a name with glob characters only matches itself.
+            return ":(literal)" + file.dropFirst(root.count)
+        }
+        guard !pathspecs.isEmpty else { return false }
+
+        guard let output = run(
+            ["status", "--porcelain", "-z", "--untracked-files=all", "--"] + pathspecs,
+            in: repository.root
+        ) else { return nil }
+        return !output.isEmpty
+    }
+
     /// Runs git and returns its output, or nil if it fails.
     ///
     /// `--no-optional-locks` stops `git status` from rewriting the index, so reading

@@ -7,21 +7,22 @@ enum ClaudeCodeLight: CaseIterable {
     /// Claude Code is working on a request.
     case working
 
-    /// Claude Code finished and is waiting for the next request.
-    case finished
+    /// Claude Code isn't working, and files it edited have changes that aren't committed:
+    /// they are waiting to be reviewed and committed.
+    case pending
 
     /// Claude Code needs an answer: a permission, a question or a dialog.
     case waiting
 
-    /// Claude Code finished, and nothing it changed since its last commit is left.
-    case committed
+    /// Claude Code isn't working, and every file it edited is committed.
+    case clean
 
     var tabColor: TerminalTabColor {
         switch self {
         case .working: return .blue
-        case .finished: return .yellow
+        case .pending: return .yellow
         case .waiting: return .red
-        case .committed: return .green
+        case .clean: return .green
         }
     }
 
@@ -30,8 +31,8 @@ enum ClaudeCodeLight: CaseIterable {
         switch self {
         case .waiting: return 3
         case .working: return 2
-        case .finished: return 1
-        case .committed: return 0
+        case .pending: return 1
+        case .clean: return 0
         }
     }
 
@@ -41,33 +42,33 @@ enum ClaudeCodeLight: CaseIterable {
 
     /// The light for a session in `status`, the value Claude Code writes to its registry
     /// entry. Unknown values show nothing, so a new state isn't shown as the wrong one.
-    init?(status: String, committed: Bool) {
+    init?(status: String, pending: Bool) {
         switch status {
         case "busy": self = .working
         case "waiting": self = .waiting
-        case "idle": self = committed ? .committed : .finished
+        case "idle": self = pending ? .pending : .clean
         default: return nil
         }
     }
 }
 
-/// Follows a transcript to tell whether the session's last change was committed: a
-/// `git commit` that succeeded, with no file edited after it. Only what was added to the
-/// transcript since the last read is read.
-final class ClaudeCodeCommitTracker {
-    private(set) var committed = false
+/// Follows a transcript to collect the files the session edited. Only what was added to
+/// the transcript since the last read is read.
+final class ClaudeCodeEditTracker {
+    /// Absolute paths of the files the session edited, in the order first edited.
+    private(set) var files: [String] = []
+    private var seen: Set<String> = []
 
     /// Where the next read starts: just after the last complete line.
     private var offset: UInt64 = 0
 
-    /// Commits started whose result hasn't been read yet, by tool use id.
-    private var pendingCommits: Set<String> = []
-
-    private static let editTools: Set<String> = ["Edit", "MultiEdit", "Write", "NotebookEdit"]
-
-    /// `git commit`, also with git's own options before `commit` such as `git -C dir commit`.
-    private static let commitCommand = try? NSRegularExpression(
-        pattern: #"\bgit(\s+-[Cc]\s+\S+|\s+--?[\w-]+(=\S+)?)*\s+commit\b"#)
+    /// The tools that edit files, and the input naming the file.
+    private static let editTools: [String: String] = [
+        "Edit": "file_path",
+        "MultiEdit": "file_path",
+        "Write": "file_path",
+        "NotebookEdit": "notebook_path",
+    ]
 
     /// How much of the transcript is read at a time. A transcript read for the first time
     /// can be many megabytes.
@@ -82,8 +83,8 @@ final class ClaudeCodeCommitTracker {
         if end < offset {
             // The transcript was replaced; read it again from the start.
             offset = 0
-            committed = false
-            pendingCommits = []
+            files = []
+            seen = []
         }
         guard end > offset else { return }
         try? handle.seek(toOffset: offset)
@@ -109,37 +110,15 @@ final class ClaudeCodeCommitTracker {
               let message = entry["message"] as? [String: Any],
               let content = message["content"] as? [[String: Any]] else { return }
 
-        for block in content {
-            switch block["type"] as? String {
-            case "tool_use":
-                guard let name = block["name"] as? String else { continue }
-                if Self.editTools.contains(name) {
-                    committed = false
-                } else if name == "Bash",
-                          let id = block["id"] as? String,
-                          let input = block["input"] as? [String: Any],
-                          let command = input["command"] as? String,
-                          Self.isCommit(command) {
-                    pendingCommits.insert(id)
-                }
-
-            case "tool_result":
-                guard let id = block["tool_use_id"] as? String,
-                      pendingCommits.remove(id) != nil else { continue }
-                if block["is_error"] as? Bool != true {
-                    committed = true
-                }
-
-            default:
-                continue
-            }
+        for block in content where block["type"] as? String == "tool_use" {
+            guard let name = block["name"] as? String,
+                  let key = Self.editTools[name],
+                  let input = block["input"] as? [String: Any],
+                  let path = input[key] as? String,
+                  path.hasPrefix("/"),
+                  seen.insert(path).inserted else { continue }
+            files.append(path)
         }
-    }
-
-    static func isCommit(_ command: String) -> Bool {
-        guard let commitCommand else { return false }
-        let range = NSRange(command.startIndex..., in: command)
-        return commitCommand.firstMatch(in: command, range: range) != nil
     }
 }
 
@@ -147,8 +126,10 @@ final class ClaudeCodeCommitTracker {
 ///
 /// Claude Code rewrites its registry entry only when the session's status changes, so the
 /// entry of each session shown in an `auto` tab is watched, and read only when it changes.
-/// The transcript, which changes all the time while Claude Code works, isn't watched: it is
-/// read when the session finishes, from where the last read stopped.
+/// Nothing else is looked at while a session works. Once it stops, whether the files it
+/// edited are committed is checked with `git status` on those files alone, and checked
+/// again when its transcript changes (Claude Code can save its last lines after it says
+/// it stopped) or when the git directory of one of those files changes (a commit).
 ///
 /// Which terminals run Claude Code is checked when an entry is added or removed (Claude
 /// Code starting or exiting) and every few seconds, which catches the rest.
@@ -157,6 +138,11 @@ final class ClaudeCodeLights {
     static let shared = ClaudeCodeLights()
 
     private static let rescanInterval: TimeInterval = 5
+
+    /// Claude Code rewrites its registry entry in place, so it can be read half written.
+    /// It is read again after this long, a few times, before the session is given up on.
+    private static let retryDelay: TimeInterval = 0.2
+    private static let retries = 5
 
     private let queue = DispatchQueue(label: "com.mitchellh.ghostty.claude-code-lights", qos: .utility)
     private let reader = ClaudeCodeLightReader()
@@ -171,6 +157,10 @@ final class ClaudeCodeLights {
 
     /// A watch on the registry entry of each session shown in an `auto` tab, by process.
     private var entryWatches: [Int: DispatchSourceFileSystemObject] = [:]
+
+    /// While a session isn't working: watches on its transcript and on the git directories
+    /// of the files it edited, by process.
+    private var idleWatches: [Int: [DispatchSourceFileSystemObject]] = [:]
 
     /// A watch on the registry directory, while any tab is `auto`.
     private var directoryWatch: DispatchSourceFileSystemObject?
@@ -204,10 +194,8 @@ final class ClaudeCodeLights {
         }
 
         let shown = Set(pids.values.joined())
-        for (pid, watch) in entryWatches where !shown.contains(pid) {
-            watch.cancel()
-            entryWatches[pid] = nil
-            lights[pid] = nil
+        for pid in entryWatches.keys where !shown.contains(pid) {
+            forget(pid)
         }
         for pid in shown where entryWatches[pid] == nil {
             watchEntry(of: pid)
@@ -228,45 +216,68 @@ final class ClaudeCodeLights {
         }
     }
 
-    // MARK: Registry entries
+    private func forget(_ pid: Int) {
+        entryWatches[pid]?.cancel()
+        entryWatches[pid] = nil
+        setIdleWatches([], for: pid)
+        lights[pid] = nil
+    }
+
+    // MARK: Sessions
 
     /// Watches the registry entry of process `pid`, if it has one, and reads it.
     private func watchEntry(of pid: Int) {
-        let fd = open(ClaudeCodeSession.registryFile(pid: pid).path, O_EVTONLY)
-        guard fd >= 0 else { return }
-
-        let watch = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd, eventMask: [.write, .extend, .delete, .rename], queue: .main)
-        watch.setEventHandler { [weak self, weak watch] in
-            MainActor.assumeIsolated {
-                guard let self, let watch else { return }
-                if watch.data.contains(.delete) || watch.data.contains(.rename) {
-                    // Claude Code exited. The entry may come back under the same process, so
-                    // it is looked for again.
-                    watch.cancel()
-                    self.entryWatches[pid] = nil
-                    self.lights[pid] = nil
-                    self.rescan()
-                } else {
-                    self.read(pid)
-                }
+        guard let watch = Self.watch(ClaudeCodeSession.registryFile(pid: pid), events: [.write, .extend, .delete, .rename], handler: { [weak self] watch in
+            guard let self else { return }
+            if watch.data.contains(.delete) || watch.data.contains(.rename) {
+                // Claude Code exited. The entry may come back under the same process, so it
+                // is looked for again.
+                self.forget(pid)
+                self.rescan()
+            } else {
+                self.read(pid)
             }
-        }
-        watch.setCancelHandler { close(fd) }
+        }) else { return }
         entryWatches[pid] = watch
-        watch.resume()
         read(pid)
     }
 
-    private func read(_ pid: Int) {
+    private func read(_ pid: Int, retriesLeft: Int = ClaudeCodeLights.retries) {
         let reader = reader
         queue.async {
-            let light = reader.light(pid: pid)
+            let reading = reader.read(pid: pid)
             DispatchQueue.main.async {
                 guard self.entryWatches[pid] != nil else { return }
-                self.lights[pid] = light
+                switch reading {
+                case .unreadable where retriesLeft > 0:
+                    // Keep what is shown until the entry reads whole.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Self.retryDelay) {
+                        self.read(pid, retriesLeft: retriesLeft - 1)
+                    }
+                    return
+
+                case .unreadable:
+                    self.lights[pid] = nil
+                    self.setIdleWatches([], for: pid)
+
+                case .session(let light, let watchWhileIdle):
+                    self.lights[pid] = light
+                    self.setIdleWatches(watchWhileIdle, for: pid)
+                }
                 self.show()
             }
+        }
+    }
+
+    /// Watches `urls` for process `pid` in place of what was watched before. Any change to
+    /// them reads the session again.
+    private func setIdleWatches(_ urls: [URL], for pid: Int) {
+        idleWatches[pid]?.forEach { $0.cancel() }
+        idleWatches[pid] = nil
+        guard !urls.isEmpty else { return }
+
+        idleWatches[pid] = urls.compactMap { url in
+            Self.watch(url, events: [.write, .extend]) { [weak self] _ in self?.read(pid) }
         }
     }
 
@@ -281,16 +292,9 @@ final class ClaudeCodeLights {
         }
 
         guard directoryWatch == nil else { return }
-        let fd = open(ClaudeCodeSession.registryDirectory.path, O_EVTONLY)
-        guard fd >= 0 else { return }
-
-        let watch = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: .write, queue: .main)
-        watch.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.rescan() }
+        directoryWatch = Self.watch(ClaudeCodeSession.registryDirectory, events: .write) { [weak self] _ in
+            self?.rescan()
         }
-        watch.setCancelHandler { close(fd) }
-        directoryWatch = watch
-        watch.resume()
     }
 
     private func stopWatchingDirectory() {
@@ -299,27 +303,107 @@ final class ClaudeCodeLights {
         directoryWatch?.cancel()
         directoryWatch = nil
     }
+
+    /// Watches a file or directory. A directory's `.write` means an entry in it was added,
+    /// removed or renamed.
+    private static func watch(
+        _ url: URL,
+        events: DispatchSource.FileSystemEvent,
+        handler: @escaping @MainActor (DispatchSourceFileSystemObject) -> Void
+    ) -> DispatchSourceFileSystemObject? {
+        let fd = open(url.path, O_EVTONLY)
+        guard fd >= 0 else { return nil }
+
+        let watch = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: events, queue: .main)
+        watch.setEventHandler { [weak watch] in
+            MainActor.assumeIsolated {
+                guard let watch else { return }
+                handler(watch)
+            }
+        }
+        watch.setCancelHandler { close(fd) }
+        watch.resume()
+        return watch
+    }
 }
 
-/// Reads registry entries and transcripts off the main thread. Only used on the queue of
-/// `ClaudeCodeLights`.
+/// Reads registry entries, transcripts and git off the main thread. Only used on the queue
+/// of `ClaudeCodeLights`.
 private final class ClaudeCodeLightReader: @unchecked Sendable {
-    /// Per session: its transcript, once found, and what has been read of it.
-    private var transcripts: [UUID: (url: URL, tracker: ClaudeCodeCommitTracker)] = [:]
+    enum Reading {
+        /// The registry entry exists but couldn't be read, perhaps because it is being
+        /// written.
+        case unreadable
 
-    func light(pid: Int) -> ClaudeCodeLight? {
-        guard let (session, status) = ClaudeCodeSession.activity(pid: pid) else { return nil }
+        /// The session's light, if it has one, and what to watch while it isn't working.
+        case session(ClaudeCodeLight?, watchWhileIdle: [URL])
+    }
 
-        // Whether the last change was committed only matters once the session finishes.
-        guard status == "idle" else { return ClaudeCodeLight(status: status, committed: false) }
+    /// Per session: its transcript, once found, and the files it edited.
+    private var transcripts: [UUID: (url: URL, edits: ClaudeCodeEditTracker)] = [:]
+
+    /// The repository of each directory looked up, or nil for a directory outside one.
+    private var repositories: [String: Git.Repository?] = [:]
+
+    func read(pid: Int) -> Reading {
+        guard let (session, status) = ClaudeCodeSession.activity(pid: pid) else {
+            let exists = FileManager.default.fileExists(atPath: ClaudeCodeSession.registryFile(pid: pid).path)
+            return exists ? .unreadable : .session(nil, watchWhileIdle: [])
+        }
+
+        // What the session changed only matters once it stops working.
+        guard status == "idle" else {
+            return .session(ClaudeCodeLight(status: status, pending: false), watchWhileIdle: [])
+        }
 
         if transcripts[session.id] == nil, let url = session.transcript {
-            transcripts[session.id] = (url, ClaudeCodeCommitTracker())
+            transcripts[session.id] = (url, ClaudeCodeEditTracker())
         }
         guard let transcript = transcripts[session.id] else {
-            return ClaudeCodeLight(status: status, committed: false)
+            return .session(ClaudeCodeLight(status: status, pending: false), watchWhileIdle: [])
         }
-        transcript.tracker.update(from: transcript.url)
-        return ClaudeCodeLight(status: status, committed: transcript.tracker.committed)
+        transcript.edits.update(from: transcript.url)
+
+        var byRepository: [Git.Repository: [String]] = [:]
+        for file in transcript.edits.files {
+            let resolved = Self.resolve(file)
+            guard let repository = repository(containing: resolved) else { continue }
+            byRepository[repository, default: []].append(resolved)
+        }
+
+        // A file whose status can't be read counts as pending, so it is never shown as done.
+        let pending = byRepository.contains { repository, files in
+            Git.hasUncommittedChanges(files, in: repository) ?? true
+        }
+        let watch = [transcript.url] + byRepository.keys.map(\.gitDir)
+        return .session(ClaudeCodeLight(status: status, pending: pending), watchWhileIdle: watch)
+    }
+
+    /// The repository containing `file`, looked up from its nearest existing directory,
+    /// since the file or its directory may have been deleted since.
+    private func repository(containing file: String) -> Git.Repository? {
+        var directory = (file as NSString).deletingLastPathComponent
+        while !FileManager.default.fileExists(atPath: directory), directory != "/" {
+            directory = (directory as NSString).deletingLastPathComponent
+        }
+        if let known = repositories[directory] { return known }
+
+        let repository = Git.repository(containing: URL(fileURLWithPath: directory))
+        repositories[directory] = repository
+        return repository
+    }
+
+    /// `file` with symlinks in its existing directories resolved, the way git reports the
+    /// repository root (`/tmp` is `/private/tmp`).
+    private static func resolve(_ file: String) -> String {
+        var existing = file
+        var rest: [String] = []
+        while !FileManager.default.fileExists(atPath: existing), existing != "/" {
+            rest.insert((existing as NSString).lastPathComponent, at: 0)
+            existing = (existing as NSString).deletingLastPathComponent
+        }
+        guard let resolved = realpath(existing, nil) else { return file }
+        defer { free(resolved) }
+        return ([String(cString: resolved)] + rest).joined(separator: "/")
     }
 }
