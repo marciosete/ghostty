@@ -285,6 +285,11 @@ class TerminalWindow: NSWindow {
         tabTitleEditor.beginEditing(for: targetWindow)
     }
 
+    @objc fileprivate func landFromContextMenu(_ sender: NSMenuItem) {
+        guard let window = sender.representedObject as? TerminalWindow else { return }
+        ClaudeCodeLights.shared.land(window)
+    }
+
     @objc private func renameTabFromContextMenu(_ sender: NSMenuItem) {
         let targetWindow = sender.representedObject as? NSWindow ?? self
         if beginInlineTabTitleEdit(for: targetWindow) {
@@ -843,6 +848,7 @@ extension TerminalWindow {
     private static let tabColorSeparatorIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.tabColorSeparator")
 
     private static let tabColorPaletteIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.tabColorPalette")
+    private static let landMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.landClaudeCodeWorktree")
 
     func configureTabContextMenuIfNeeded(_ menu: NSMenu) {
         guard isTabContextMenu(menu) else { return }
@@ -895,7 +901,8 @@ extension TerminalWindow {
         menu.removeItems(withIdentifiers: [
             Self.tabColorSeparatorIdentifier,
             Self.changeTitleMenuItemIdentifier,
-            Self.tabColorPaletteIdentifier
+            Self.tabColorPaletteIdentifier,
+            Self.landMenuItemIdentifier
         ])
 
         let separator = NSMenuItem.separator()
@@ -909,6 +916,19 @@ extension TerminalWindow {
         changeTitleItem.representedObject = target?.window
         changeTitleItem.setImageIfDesired(systemSymbolName: "pencil.line")
         menu.addItem(changeTitleItem)
+
+        if let window = target?.window as? TerminalWindow,
+           let state = window.claudeCodeState, !state.landableWorktrees.isEmpty {
+            let landItem = NSMenuItem(
+                title: "Land on \(state.landingBranch ?? "Main Checkout")",
+                action: #selector(TerminalWindow.landFromContextMenu(_:)),
+                keyEquivalent: "")
+            landItem.identifier = Self.landMenuItemIdentifier
+            landItem.target = self
+            landItem.representedObject = window
+            landItem.setImageIfDesired(systemSymbolName: "arrow.triangle.merge")
+            menu.addItem(landItem)
+        }
 
         let paletteItem = NSMenuItem()
         paletteItem.identifier = Self.tabColorPaletteIdentifier

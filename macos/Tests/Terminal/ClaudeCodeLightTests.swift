@@ -39,6 +39,35 @@ struct ClaudeCodeLightTests {
         #expect(ClaudeCodeTabState(light: .working).badge == nil)
     }
 
+    @Test func committedButNotLandedIsPurple() {
+        #expect(ClaudeCodeLight(status: "idle", pending: false, unlanded: true) == .unlanded)
+        #expect(ClaudeCodeLight(status: "idle", pending: true, unlanded: true) == .pending)
+        #expect(ClaudeCodeLight(status: "busy", pending: false, unlanded: true) == .working)
+        #expect(ClaudeCodeLight.unlanded.tabColor == .purple)
+        #expect(ClaudeCodeLight.mostUrgent([.clean, .unlanded]) == .unlanded)
+        #expect(ClaudeCodeLight.mostUrgent([.unlanded, .pending]) == .pending)
+    }
+
+    @Test func badgeCountsCommitsWhilePurple() {
+        let worktree = Git.Worktree(
+            root: URL(fileURLWithPath: "/repo/.claude/worktrees/a"),
+            gitDir: URL(fileURLWithPath: "/repo/.git/worktrees/a"),
+            commonDir: URL(fileURLWithPath: "/repo/.git"),
+            branch: "worktree-a",
+            mainRoot: URL(fileURLWithPath: "/repo"),
+            baseBranch: "main")
+        let state = ClaudeCodeTabState(light: .unlanded, unlandedCommits: 2, worktrees: [worktree])
+        #expect(state.badge == 2)
+        #expect(state.badgeHelp == "2 commits not on main yet")
+        #expect(state.landableWorktrees == [worktree])
+        #expect(state.landingBranch == "main")
+
+        // Only a purple tab can land: yellow still has files to commit.
+        let pending = ClaudeCodeTabState(light: .pending, pendingFiles: 1, editedFiles: 1, unlandedCommits: 2, worktrees: [worktree])
+        #expect(pending.landableWorktrees.isEmpty)
+        #expect(pending.badgeHelp == "1 file not committed")
+    }
+
     @Test func splitTabAddsUpItsSessions() {
         let combined = ClaudeCodeTabState.combined([
             ClaudeCodeTabState(light: .pending, pendingFiles: 2, editedFiles: 4),
@@ -72,7 +101,7 @@ struct ClaudeCodeLightTests {
         }
         #expect(TerminalTabColor.tabChoices.first == .auto)
         #expect(!TerminalTabColor.groupChoices.contains(.auto))
-        #expect(!TerminalTabColor.purple.isTrafficLight)
+        #expect(!TerminalTabColor.pink.isTrafficLight)
     }
 
     @Test func savedColorsKeepTheirValues() {
@@ -150,6 +179,99 @@ struct ClaudeCodeLightTests {
         #expect(process.terminationStatus == 0)
     }
 
+    @Test func parsesTheWorktreeList() {
+        let output = "worktree /repo\0HEAD abc\0branch refs/heads/main\0\0worktree /repo/.claude/worktrees/a\0HEAD def\0branch refs/heads/worktree-a\0locked\0\0worktree /tmp/d\0HEAD 123\0detached\0\0"
+        let worktrees = Git.parseWorktreeList(output)
+        #expect(worktrees.map(\.path) == ["/repo", "/repo/.claude/worktrees/a", "/tmp/d"])
+        #expect(worktrees.map(\.branch) == ["main", "worktree-a", nil])
+    }
+
+    /// A repository with one commit on `main` and a linked worktree on `worktree-a`.
+    private static func repositoryWithWorktree() throws -> (made: URL, main: URL, worktree: URL) {
+        let made = FileManager.default.temporaryDirectory.appendingPathComponent("claude-code-light-\(UUID().uuidString)")
+        let main = made.appendingPathComponent("main")
+        try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+        try git(["init", "-q", "-b", "main"], in: main)
+        try git(["config", "user.name", "Test"], in: main)
+        try git(["config", "user.email", "test@example.com"], in: main)
+        try Data("base\n".utf8).write(to: main.appendingPathComponent("shared.txt"))
+        try git(["add", "."], in: main)
+        try git(["commit", "-q", "-m", "base"], in: main)
+        let worktree = made.appendingPathComponent("a")
+        try git(["worktree", "add", "-q", "-b", "worktree-a", worktree.path], in: main)
+        return (made, main, worktree)
+    }
+
+    private static func commit(_ file: String, _ contents: String, in directory: URL) throws {
+        try Data(contents.utf8).write(to: directory.appendingPathComponent(file))
+        try git(["add", "."], in: directory)
+        try git(["commit", "-q", "-m", file], in: directory)
+    }
+
+    @Test func worktreeProgressAndLanding() throws {
+        let (made, main, worktreeURL) = try Self.repositoryWithWorktree()
+        defer { try? FileManager.default.removeItem(at: made) }
+
+        #expect(Git.linkedWorktree(containing: main) == nil)
+        let worktree = try #require(Git.linkedWorktree(containing: worktreeURL))
+        #expect(worktree.branch == "worktree-a")
+        #expect(worktree.baseBranch == "main")
+        #expect(worktree.mainRoot == Git.repository(containing: main)?.root)
+
+        // Every change in the worktree counts, however it was made.
+        try Data("x".utf8).write(to: worktreeURL.appendingPathComponent("made-by-a-script.txt"))
+        #expect(Git.progress(of: worktree)?.uncommittedFiles == 1)
+        #expect(Git.land(worktree).isFailure)
+
+        try Self.git(["add", "."], in: worktreeURL)
+        try Self.git(["commit", "-q", "-m", "script"], in: worktreeURL)
+        #expect(Git.progress(of: worktree)?.uncommittedFiles == 0)
+        #expect(Git.progress(of: worktree)?.unlandedCommits == 1)
+
+        // Another session landed first: the commit is replayed on top, with no merge.
+        try Self.commit("other.txt", "other\n", in: main)
+        guard case .success = Git.land(worktree) else {
+            Issue.record("landing failed")
+            return
+        }
+        #expect(Git.progress(of: worktree)?.unlandedCommits == 0)
+        #expect(FileManager.default.fileExists(atPath: main.appendingPathComponent("made-by-a-script.txt").path))
+        #expect(try Self.output(["rev-list", "--merges", "--count", "main"], in: main) == "0")
+        #expect(try Self.output(["rev-list", "--count", "main"], in: main) == "3")
+    }
+
+    @Test func conflictsLeaveBothBranchesAlone() throws {
+        let (made, main, worktreeURL) = try Self.repositoryWithWorktree()
+        defer { try? FileManager.default.removeItem(at: made) }
+        let worktree = try #require(Git.linkedWorktree(containing: worktreeURL))
+
+        try Self.commit("shared.txt", "mine\n", in: worktreeURL)
+        try Self.commit("shared.txt", "theirs\n", in: main)
+        let mainBefore = try Self.output(["rev-parse", "main"], in: main)
+        let branchBefore = try Self.output(["rev-parse", "worktree-a"], in: main)
+
+        guard case .failure(.conflicts) = Git.land(worktree) else {
+            Issue.record("expected a conflict")
+            return
+        }
+        #expect(try Self.output(["rev-parse", "main"], in: main) == mainBefore)
+        #expect(try Self.output(["rev-parse", "worktree-a"], in: main) == branchBefore)
+        #expect(Git.progress(of: worktree)?.uncommittedFiles == 0)
+    }
+
+    private static func output(_ arguments: [String], in directory: URL) throws -> String {
+        let process = Process()
+        process.executableURL = Git.executableURL
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     @Test func uncommittedChangesOfTheGivenFilesOnly() throws {
         let made = FileManager.default.temporaryDirectory.appendingPathComponent("claude-code-light-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
@@ -183,5 +305,12 @@ struct ClaudeCodeLightTests {
         // Each pending file counts once.
         try Data("d".utf8).write(to: URL(fileURLWithPath: other))
         #expect(Git.uncommittedFileCount([mine, other, mine], in: repository) == 2)
+    }
+}
+
+private extension Result {
+    var isFailure: Bool {
+        if case .failure = self { return true }
+        return false
     }
 }

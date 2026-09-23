@@ -212,20 +212,169 @@ enum Git {
         return paths
     }
 
+    // MARK: Worktrees
+
+    /// A linked worktree (`git worktree add`), such as the one `claude --worktree` gives a
+    /// session, and the main checkout its branch lands on.
+    struct Worktree: Hashable {
+        /// The top level directory of the worktree.
+        let root: URL
+
+        /// The worktree's own git directory (`<main>/.git/worktrees/<name>`), which holds
+        /// its HEAD and index.
+        let gitDir: URL
+
+        /// The git directory shared by every worktree of the repository.
+        let commonDir: URL
+
+        /// The worktree's branch, or nil when HEAD is detached.
+        let branch: String?
+
+        /// The main checkout of the repository.
+        let mainRoot: URL
+
+        /// The branch checked out in the main checkout, which the worktree's commits land
+        /// on, or nil when it is detached.
+        let baseBranch: String?
+    }
+
+    /// The linked worktree containing `directory`, or nil if it is in the main checkout or
+    /// not in a repository.
+    static func linkedWorktree(containing directory: URL) -> Worktree? {
+        guard let output = run(
+            ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"],
+            in: directory
+        ) else { return nil }
+        let lines = output.split(separator: "\n").map(String.init)
+        guard lines.count >= 3 else { return nil }
+
+        let gitDir = realPath(lines[1])
+        let commonDir = realPath(lines[2])
+        guard gitDir != commonDir else { return nil }
+
+        guard let list = run(["worktree", "list", "--porcelain", "-z"], in: directory),
+              let main = parseWorktreeList(list).first else { return nil }
+        let branch = run(["symbolic-ref", "--quiet", "--short", "HEAD"], in: directory)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return Worktree(
+            root: realPath(lines[0]),
+            gitDir: gitDir,
+            commonDir: commonDir,
+            branch: branch.flatMap { $0.isEmpty ? nil : $0 },
+            mainRoot: realPath(main.path),
+            baseBranch: main.branch)
+    }
+
+    /// The worktrees in `git worktree list --porcelain -z`, main checkout first, with
+    /// their branches as short names.
+    static func parseWorktreeList(_ output: String) -> [(path: String, branch: String?)] {
+        var worktrees: [(path: String, branch: String?)] = []
+        for field in output.split(separator: "\0", omittingEmptySubsequences: false) {
+            if field.hasPrefix("worktree ") {
+                worktrees.append((String(field.dropFirst("worktree ".count)), nil))
+            } else if field.hasPrefix("branch "), !worktrees.isEmpty {
+                let ref = field.dropFirst("branch ".count)
+                worktrees[worktrees.count - 1].branch = String(ref.hasPrefix("refs/heads/") ? ref.dropFirst(11) : ref)
+            }
+        }
+        return worktrees
+    }
+
+    /// Where a worktree stands: files with changes not committed, and commits on its
+    /// branch that aren't on the base branch yet. Returns nil if git fails.
+    static func progress(of worktree: Worktree) -> (uncommittedFiles: Int, unlandedCommits: Int)? {
+        guard let status = run(["status", "--porcelain", "-z", "--untracked-files=all"], in: worktree.root) else {
+            return nil
+        }
+        var unlanded = 0
+        if let base = worktree.baseBranch {
+            guard let count = run(["rev-list", "--count", "refs/heads/\(base)..HEAD"], in: worktree.root)
+                .flatMap({ Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }) else { return nil }
+            unlanded = count
+        }
+        return (changedPaths(porcelain: status).count, unlanded)
+    }
+
+    enum LandError: Error {
+        /// The worktree has changes that aren't committed.
+        case uncommittedChanges
+
+        /// The main checkout has no branch checked out to land on.
+        case noBaseBranch
+
+        /// Replaying the worktree's commits on the base branch hit conflicts. The rebase
+        /// was undone.
+        case conflicts(String)
+
+        /// The base branch couldn't be moved to the worktree's commits.
+        case fastForwardFailed(String)
+    }
+
+    /// Lands a worktree's commits on the base branch without a merge commit: rebases them
+    /// onto the base branch, then fast-forwards the base branch in the main checkout.
+    static func land(_ worktree: Worktree) -> Result<Void, LandError> {
+        guard let base = worktree.baseBranch else { return .failure(.noBaseBranch) }
+        guard let progress = progress(of: worktree), progress.uncommittedFiles == 0 else {
+            return .failure(.uncommittedChanges)
+        }
+
+        let rebase = execute(["rebase", "refs/heads/\(base)"], in: worktree.root, writes: true)
+        guard rebase.succeeded else {
+            _ = execute(["rebase", "--abort"], in: worktree.root, writes: true)
+            return .failure(.conflicts(rebase.message))
+        }
+
+        let target = worktree.branch.map { "refs/heads/\($0)" } ?? "HEAD"
+        let head = execute(["rev-parse", target], in: worktree.root, writes: false)
+        guard head.succeeded else { return .failure(.fastForwardFailed(head.message)) }
+        let commit = head.output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let merge = execute(["merge", "--ff-only", commit], in: worktree.mainRoot, writes: true)
+        guard merge.succeeded else { return .failure(.fastForwardFailed(merge.message)) }
+        return .success(())
+    }
+
+    // MARK: Running git
+
     /// Runs git and returns its output, or nil if it fails.
     ///
     /// `--no-optional-locks` stops `git status` from rewriting the index, so reading
     /// the status never changes the repository (and never triggers our own watcher).
     private static func run(_ arguments: [String], in directory: URL) -> String? {
-        guard let executableURL else { return nil }
+        let result = execute(arguments, in: directory, writes: false)
+        return result.succeeded ? result.output : nil
+    }
+
+    private struct Execution {
+        let succeeded: Bool
+        let output: String
+        let error: String
+
+        /// What git said about a failure, for showing to the user.
+        var message: String {
+            let text = error.isEmpty ? output : error
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    /// Runs git. A command that `writes` may take locks and changes the repository, and
+    /// never waits on an editor.
+    private static func execute(_ arguments: [String], in directory: URL, writes: Bool) -> Execution {
+        guard let executableURL else { return Execution(succeeded: false, output: "", error: "git not found") }
 
         let process = Process()
         process.executableURL = executableURL
-        process.arguments = ["--no-optional-locks"] + arguments
+        process.arguments = (writes ? [] : ["--no-optional-locks"]) + arguments
         process.currentDirectoryURL = directory
 
         var environment = ProcessInfo.processInfo.environment
-        environment["GIT_OPTIONAL_LOCKS"] = "0"
+        if writes {
+            environment["GIT_EDITOR"] = "true"
+            environment["GIT_TERMINAL_PROMPT"] = "0"
+        } else {
+            environment["GIT_OPTIONAL_LOCKS"] = "0"
+        }
         environment["LC_ALL"] = "C"
         for key in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
             environment[key] = nil
@@ -234,18 +383,33 @@ enum Git {
 
         let output = Pipe()
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        // What a write says when it fails is shown to the user. It goes to a file, as a
+        // second pipe could fill up while the first is read.
+        let errorFile = writes
+            ? FileManager.default.temporaryDirectory.appendingPathComponent("ghostty-git-\(UUID().uuidString).err")
+            : nil
+        defer { errorFile.map { try? FileManager.default.removeItem(at: $0) } }
+        let errorHandle = errorFile.flatMap { file -> FileHandle? in
+            FileManager.default.createFile(atPath: file.path, contents: nil)
+            return try? FileHandle(forWritingTo: file)
+        }
+        process.standardError = errorHandle ?? FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
-            return nil
+            try? errorHandle?.close()
+            return Execution(succeeded: false, output: "", error: error.localizedDescription)
         }
 
         // Read before waiting so a large output can't fill the pipe and block git.
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        try? errorHandle?.close()
+        let errorText = errorFile.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+        return Execution(
+            succeeded: process.terminationStatus == 0,
+            output: String(decoding: data, as: UTF8.self),
+            error: errorText)
     }
 }

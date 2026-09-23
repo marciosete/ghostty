@@ -19,7 +19,7 @@ enum TerminalTabColor: Int, CaseIterable, Codable {
 
     /// The colors a tab can be given. The traffic-light colors that `auto` shows are left
     /// out, so a color picked by hand is never mistaken for a session's state.
-    static let tabChoices: [TerminalTabColor] = [.auto, .none, .purple, .pink, .orange, .teal, .graphite]
+    static let tabChoices: [TerminalTabColor] = [.auto, .none, .pink, .orange, .teal, .graphite]
 
     /// The colors a group can be given. A group runs no session, so it can't be `auto`.
     static let groupChoices: [TerminalTabColor] = tabChoices.filter { $0 != .auto }

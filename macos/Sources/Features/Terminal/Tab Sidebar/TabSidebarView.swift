@@ -454,6 +454,12 @@ private struct TabSidebarTabRow: View {
             TabSidebarColorMenu(title: "Session Color", choices: TerminalTabColor.tabChoices, selected: tab.assignedColor) { color in
                 model.setColor(color, for: window)
             }
+            if let state = tab.claudeCodeState, !state.landableWorktrees.isEmpty {
+                Button("Land on \(state.landingBranch ?? "Main Checkout")") {
+                    ClaudeCodeLights.shared.land(window)
+                }
+                .help("Rebase the session's commits onto the branch, then fast-forward it")
+            }
 
             Divider()
 

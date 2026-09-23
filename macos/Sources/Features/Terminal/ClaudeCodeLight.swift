@@ -14,13 +14,19 @@ enum ClaudeCodeLight: CaseIterable {
     /// Claude Code needs an answer: a permission, a question or a dialog.
     case waiting
 
-    /// Claude Code isn't working, and every file it edited is committed.
+    /// Claude Code isn't working in its own worktree, and everything there is committed,
+    /// but the commits haven't landed on the main checkout's branch yet.
+    case unlanded
+
+    /// Claude Code isn't working, and every file it edited is committed (and, in a
+    /// worktree, landed).
     case clean
 
     var tabColor: TerminalTabColor {
         switch self {
         case .working: return .blue
         case .pending: return .yellow
+        case .unlanded: return .purple
         case .waiting: return .red
         case .clean: return .green
         }
@@ -29,9 +35,10 @@ enum ClaudeCodeLight: CaseIterable {
     /// A tab with several sessions shows the one that needs attention most.
     private var urgency: Int {
         switch self {
-        case .waiting: return 3
-        case .working: return 2
-        case .pending: return 1
+        case .waiting: return 4
+        case .working: return 3
+        case .pending: return 2
+        case .unlanded: return 1
         case .clean: return 0
         }
     }
@@ -42,54 +49,97 @@ enum ClaudeCodeLight: CaseIterable {
 
     /// The light for a session in `status`, the value Claude Code writes to its registry
     /// entry. Unknown values show nothing, so a new state isn't shown as the wrong one.
-    init?(status: String, pending: Bool) {
+    init?(status: String, pending: Bool, unlanded: Bool = false) {
         switch status {
         case "busy": self = .working
         case "waiting": self = .waiting
-        case "idle": self = pending ? .pending : .clean
+        case "idle": self = pending ? .pending : unlanded ? .unlanded : .clean
         default: return nil
         }
     }
 }
 
 /// What an `auto` tab shows of the Claude Code sessions in its terminals: its color, and
-/// while it is yellow, how many files are waiting to be committed.
+/// while it is yellow, how many files are waiting to be committed, or while it is purple,
+/// how many commits are waiting to land.
 struct ClaudeCodeTabState: Equatable {
     let light: ClaudeCodeLight
 
     /// Files the sessions edited that have changes not committed. Only counted once a
-    /// session stops working.
+    /// session stops working. In a worktree, every file with changes counts.
     let pendingFiles: Int
 
     /// Files the sessions edited that are in a git repository.
     let editedFiles: Int
 
-    init(light: ClaudeCodeLight, pendingFiles: Int = 0, editedFiles: Int = 0) {
+    /// Commits in the sessions' worktrees that aren't on the main checkout's branch.
+    let unlandedCommits: Int
+
+    /// The worktrees of the sessions that run in one, once they stop working.
+    let worktrees: [Git.Worktree]
+
+    init(
+        light: ClaudeCodeLight,
+        pendingFiles: Int = 0,
+        editedFiles: Int = 0,
+        unlandedCommits: Int = 0,
+        worktrees: [Git.Worktree] = []
+    ) {
         self.light = light
         self.pendingFiles = pendingFiles
         self.editedFiles = editedFiles
+        self.unlandedCommits = unlandedCommits
+        self.worktrees = worktrees
     }
 
     /// The tab of several sessions shows the one that needs attention most, and the files
-    /// all of them have left to commit.
+    /// and commits all of them have left.
     static func combined(_ states: [ClaudeCodeTabState]) -> ClaudeCodeTabState? {
         guard let light = ClaudeCodeLight.mostUrgent(states.map(\.light)) else { return nil }
         return ClaudeCodeTabState(
             light: light,
             pendingFiles: states.reduce(0) { $0 + $1.pendingFiles },
-            editedFiles: states.reduce(0) { $0 + $1.editedFiles })
+            editedFiles: states.reduce(0) { $0 + $1.editedFiles },
+            unlandedCommits: states.reduce(0) { $0 + $1.unlandedCommits },
+            worktrees: states.flatMap(\.worktrees))
     }
 
-    /// The number shown on the tab: the files waiting to be committed, while it is yellow.
+    /// The number shown on the tab: the files waiting to be committed while it is yellow,
+    /// and the commits waiting to land while it is purple.
     var badge: Int? {
-        light == .pending && pendingFiles > 0 ? pendingFiles : nil
+        switch light {
+        case .pending: return pendingFiles > 0 ? pendingFiles : nil
+        case .unlanded: return unlandedCommits > 0 ? unlandedCommits : nil
+        default: return nil
+        }
     }
 
     /// Says what the badge counts.
     var badgeHelp: String? {
         guard let badge else { return nil }
+        if light == .unlanded {
+            let commits = badge == 1 ? "commit" : "commits"
+            return "\(badge) \(commits) not on \(landingBranch ?? "the main checkout's branch") yet"
+        }
         let files = editedFiles == 1 ? "file" : "files"
-        return "\(badge) of \(editedFiles) edited \(files) not committed"
+        if editedFiles > badge {
+            return "\(badge) of \(editedFiles) edited \(files) not committed"
+        }
+        return "\(badge) \(badge == 1 ? "file" : "files") not committed"
+    }
+
+    /// The worktrees that can land now: everything in them is committed and some of it
+    /// isn't on the base branch yet. Only offered while the tab is purple, so no session
+    /// of the tab is working or has files to commit.
+    var landableWorktrees: [Git.Worktree] {
+        guard light == .unlanded else { return [] }
+        return worktrees.filter { $0.baseBranch != nil }
+    }
+
+    /// The branch the worktrees land on, when they all land on the same one.
+    var landingBranch: String? {
+        let branches = Set(worktrees.compactMap(\.baseBranch))
+        return branches.count == 1 ? branches.first : nil
     }
 }
 
@@ -223,6 +273,52 @@ final class ClaudeCodeLights {
             window.claudeCodeState = nil
         }
         rescan()
+    }
+
+    // MARK: Landing
+
+    /// Lands the commits of the worktrees of `window`'s sessions on their base branch,
+    /// then reads the sessions again. Failures are shown in an alert on the window.
+    func land(_ window: TerminalWindow) {
+        let worktrees = window.claudeCodeState?.landableWorktrees ?? []
+        guard !worktrees.isEmpty else { return }
+
+        queue.async {
+            let failures = worktrees.compactMap { worktree -> (Git.Worktree, Git.LandError)? in
+                if case .failure(let error) = Git.land(worktree) { return (worktree, error) }
+                return nil
+            }
+            DispatchQueue.main.async {
+                for pid in self.pids[ObjectIdentifier(window)] ?? [] {
+                    self.read(pid)
+                }
+                if let (worktree, error) = failures.first {
+                    Self.showLandingFailure(error, of: worktree, in: window)
+                }
+            }
+        }
+    }
+
+    private static func showLandingFailure(_ error: Git.LandError, of worktree: Git.Worktree, in window: NSWindow) {
+        let name = worktree.branch ?? worktree.root.lastPathComponent
+        let base = worktree.baseBranch ?? "the main checkout"
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        switch error {
+        case .uncommittedChanges:
+            alert.messageText = "\(name) has changes that aren't committed"
+            alert.informativeText = "Commit them, then land again."
+        case .noBaseBranch:
+            alert.messageText = "There's no branch to land \(name) on"
+            alert.informativeText = "The main checkout at \(worktree.mainRoot.path) has no branch checked out."
+        case .conflicts(let message):
+            alert.messageText = "\(name) conflicts with \(base)"
+            alert.informativeText = "Nothing was changed. Ask the session to rebase onto \(base) and resolve the conflicts, then land again.\n\n\(message)"
+        case .fastForwardFailed(let message):
+            alert.messageText = "\(base) couldn't be moved to \(name)"
+            alert.informativeText = "\(name) was rebased onto \(base), but \(base) wasn't changed. It may have changes in the main checkout that the commits would overwrite.\n\n\(message)"
+        }
+        alert.beginSheetModal(for: window)
     }
 
     // MARK: Terminals
@@ -400,6 +496,13 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
         if transcripts[session.id] == nil, let url = session.transcript {
             transcripts[session.id] = (url, ClaudeCodeEditTracker())
         }
+
+        // A session in its own worktree owns every change there, however it made them, so
+        // the worktree's status stands in for the files the transcript names.
+        if let worktree = Git.linkedWorktree(containing: URL(fileURLWithPath: session.cwd)) {
+            return read(worktree, status: status, transcript: transcripts[session.id]?.url)
+        }
+
         guard let transcript = transcripts[session.id] else {
             return .session(Self.state(status: status), watchWhileIdle: [])
         }
@@ -421,9 +524,40 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
         return .session(Self.state(status: status, pendingFiles: pending, editedFiles: edited), watchWhileIdle: watch)
     }
 
-    private static func state(status: String, pendingFiles: Int = 0, editedFiles: Int = 0) -> ClaudeCodeTabState? {
-        guard let light = ClaudeCodeLight(status: status, pending: pendingFiles > 0) else { return nil }
-        return ClaudeCodeTabState(light: light, pendingFiles: pendingFiles, editedFiles: editedFiles)
+    /// The state of an idle session running in `worktree`. Watches the worktree's git
+    /// directory (a commit) and the shared branches (landing moves the base branch), as well
+    /// as the transcript.
+    private func read(_ worktree: Git.Worktree, status: String, transcript: URL?) -> Reading {
+        let watch = [transcript, worktree.gitDir, worktree.commonDir.appendingPathComponent("refs/heads")]
+            .compactMap { $0 }
+        guard let progress = Git.progress(of: worktree) else {
+            return .session(Self.state(status: status), watchWhileIdle: watch)
+        }
+        let state = Self.state(
+            status: status,
+            pendingFiles: progress.uncommittedFiles,
+            editedFiles: progress.uncommittedFiles,
+            unlandedCommits: progress.unlandedCommits,
+            worktree: worktree)
+        return .session(state, watchWhileIdle: watch)
+    }
+
+    private static func state(
+        status: String,
+        pendingFiles: Int = 0,
+        editedFiles: Int = 0,
+        unlandedCommits: Int = 0,
+        worktree: Git.Worktree? = nil
+    ) -> ClaudeCodeTabState? {
+        guard let light = ClaudeCodeLight(status: status, pending: pendingFiles > 0, unlanded: unlandedCommits > 0) else {
+            return nil
+        }
+        return ClaudeCodeTabState(
+            light: light,
+            pendingFiles: pendingFiles,
+            editedFiles: editedFiles,
+            unlandedCommits: unlandedCommits,
+            worktrees: worktree.map { [$0] } ?? [])
     }
 
     /// The repository containing `file`, looked up from its nearest existing directory,
