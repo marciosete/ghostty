@@ -424,33 +424,33 @@ fn actionCommands(action: Action.Key) []const Command {
 
         .new_tab => comptime &.{.{
             .action = .new_tab,
-            .title = i18n.N_("New Tab"),
-            .description = i18n.N_("Open a new tab."),
+            .title = i18n.N_("New Session"),
+            .description = i18n.N_("Open a new session."),
         }},
 
         .move_tab => comptime &.{
             .{
                 .action = .{ .move_tab = -1 },
-                .title = i18n.N_("Move Tab Left"),
-                .description = i18n.N_("Move the current tab to the left."),
+                .title = i18n.N_("Move Session Left"),
+                .description = i18n.N_("Move the current session to the left."),
             },
             .{
                 .action = .{ .move_tab = 1 },
-                .title = i18n.N_("Move Tab Right"),
-                .description = i18n.N_("Move the current tab to the right."),
+                .title = i18n.N_("Move Session Right"),
+                .description = i18n.N_("Move the current session to the right."),
             },
         },
 
         .move_tab_to_new_window => comptime &.{.{
             .action = .move_tab_to_new_window,
-            .title = i18n.N_("Move Tab to New Window"),
-            .description = i18n.N_("Move the current tab to a new window."),
+            .title = i18n.N_("Move Session to New Window"),
+            .description = i18n.N_("Move the current session to a new window."),
         }},
 
         .toggle_tab_overview => comptime &.{.{
             .action = .toggle_tab_overview,
-            .title = i18n.N_("Toggle Tab Overview"),
-            .description = i18n.N_("Toggle the tab overview."),
+            .title = i18n.N_("Toggle Session Overview"),
+            .description = i18n.N_("Toggle the session overview."),
         }},
 
         .prompt_surface_title => comptime &.{.{
@@ -461,8 +461,8 @@ fn actionCommands(action: Action.Key) []const Command {
 
         .prompt_tab_title => comptime &.{.{
             .action = .prompt_tab_title,
-            .title = i18n.N_("Change Tab Title…"),
-            .description = i18n.N_("Prompt for a new title for the current tab."),
+            .title = i18n.N_("Change Session Title…"),
+            .description = i18n.N_("Prompt for a new title for the current session."),
         }},
 
         .prompt_window_title => comptime &.{.{
@@ -610,18 +610,18 @@ fn actionCommands(action: Action.Key) []const Command {
         .close_tab => comptime &.{
             .{
                 .action = .{ .close_tab = .this },
-                .title = i18n.N_("Close Tab"),
-                .description = i18n.N_("Close the current tab."),
+                .title = i18n.N_("Close Session"),
+                .description = i18n.N_("Close the current session."),
             },
             .{
                 .action = .{ .close_tab = .other },
-                .title = i18n.N_("Close Other Tabs"),
-                .description = i18n.N_("Close all tabs in this window except the current one."),
+                .title = i18n.N_("Close Other Sessions"),
+                .description = i18n.N_("Close all sessions in this window except the current one."),
             },
             .{
                 .action = .{ .close_tab = .right },
-                .title = i18n.N_("Close Tabs to the Right"),
-                .description = i18n.N_("Close all tabs to the right of the current one."),
+                .title = i18n.N_("Close Sessions to the Right"),
+                .description = i18n.N_("Close all sessions to the right of the current one."),
             },
         },
 

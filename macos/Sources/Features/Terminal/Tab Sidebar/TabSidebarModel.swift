@@ -413,7 +413,7 @@ final class TabSidebarModel: ObservableObject {
 
         hostController.confirmClose(
             messageText: "Close Group?",
-            informativeText: "At least one tab in this group still has a running process. If you close the group the processes will be killed."
+            informativeText: "At least one session in this group still has a running process. If you close the group the processes will be killed."
         ) {
             closeAll()
         }

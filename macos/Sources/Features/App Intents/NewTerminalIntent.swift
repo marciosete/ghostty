@@ -168,7 +168,7 @@ extension NewTerminalLocation: AppEnum {
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Terminal Location")
 
     static var caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .tab: .init(title: "Tab"),
+        .tab: .init(title: "Session"),
         .window: .init(title: "Window"),
         .splitLeft: .init(title: "Split Left"),
         .splitRight: .init(title: "Split Right"),

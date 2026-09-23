@@ -59,9 +59,9 @@ class TerminalWindow: NSWindow {
         windowController as? TerminalController
     }
 
-    /// The color assigned to this window's tab. Setting this updates the tab color indicator
-    /// and marks the window's restorable state as dirty.
-    var tabColor: TerminalTabColor = .none {
+    /// The color assigned to this window's tab, `auto` for a new tab. Setting this updates the
+    /// tab color indicator and marks the window's restorable state as dirty.
+    var tabColor: TerminalTabColor = .auto {
         didSet {
             guard tabColor != oldValue else { return }
             invalidateRestorableState()
@@ -129,6 +129,9 @@ class TerminalWindow: NSWindow {
     override func awakeFromNib() {
         // Notify that this terminal window has loaded
         NotificationCenter.default.post(name: Self.terminalDidAwake, object: self)
+
+        // A new tab starts out `auto`, which `tabColor`'s didSet doesn't see.
+        ClaudeCodeLights.shared.follow(self)
 
         // This is fragile, but there doesn't seem to be an official API for customizing
         // native tab bar menus.
@@ -853,7 +856,7 @@ extension TerminalWindow {
             .flatMap { $0.windowController as? TerminalController }
 
         // Close tabs to the right
-        let item = NSMenuItem(title: "Close Tabs to the Right", action: #selector(TerminalController.closeTabsOnTheRight(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: "Close Sessions to the Right", action: #selector(TerminalController.closeTabsOnTheRight(_:)), keyEquivalent: "")
         item.identifier = Self.closeTabsOnRightMenuItemIdentifier
         item.target = targetController
         item.setImageIfDesired(systemSymbolName: "xmark")
@@ -900,7 +903,7 @@ extension TerminalWindow {
         menu.addItem(separator)
 
         // Rename Tab...
-        let changeTitleItem = NSMenuItem(title: "Rename Tab...", action: #selector(TerminalWindow.renameTabFromContextMenu(_:)), keyEquivalent: "")
+        let changeTitleItem = NSMenuItem(title: "Rename Session...", action: #selector(TerminalWindow.renameTabFromContextMenu(_:)), keyEquivalent: "")
         changeTitleItem.identifier = Self.changeTitleMenuItemIdentifier
         changeTitleItem.target = self
         changeTitleItem.representedObject = target?.window

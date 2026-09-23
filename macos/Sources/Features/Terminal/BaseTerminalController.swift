@@ -428,7 +428,7 @@ class BaseTerminalController: NSWindowController,
         guard let window else { return }
 
         let alert = NSAlert()
-        alert.messageText = "Change Tab Title"
+        alert.messageText = "Change Session Title"
         alert.informativeText = "Leave blank to restore the default."
         alert.alertStyle = .informational
 

@@ -161,7 +161,7 @@
                                     <action selector="newWindow:" target="-1" id="pnf-fE-gHi"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="New Tab" id="uTG-Vz-hJU">
+                            <menuItem title="New Session" id="uTG-Vz-hJU">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="newTab:" target="-1" id="KoW-K7-hw5"/>
@@ -199,7 +199,7 @@
                                     <action selector="close:" target="-1" id="tTZ-2b-Mbm"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Close Tab" id="Obb-Mk-j8J">
+                            <menuItem title="Close Session" id="Obb-Mk-j8J">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="closeTab:" target="-1" id="UBb-Bd-nkj"/>
@@ -340,7 +340,7 @@
                                     <action selector="toggleCommandPalette:" target="-1" id="FcT-XD-gM1"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Change Tab Title..." id="iac-lh-Cl7">
+                            <menuItem title="Change Session Title..." id="iac-lh-Cl7">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="changeTabTitle:" target="-1" id="Jhl-9P-bMj"/>

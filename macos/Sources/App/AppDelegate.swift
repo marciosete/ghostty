@@ -1127,7 +1127,7 @@ extension AppDelegate {
 
     private func reloadDockMenu() {
         let newWindow = NSMenuItem(title: "New Window", action: #selector(newWindow), keyEquivalent: "")
-        let newTab = NSMenuItem(title: "New Tab", action: #selector(newTab), keyEquivalent: "")
+        let newTab = NSMenuItem(title: "New Session", action: #selector(newTab), keyEquivalent: "")
 
         dockMenu.removeAllItems()
         dockMenu.addItem(newWindow)

@@ -433,8 +433,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         if let fullscreenStyle = parentController.fullscreenStyle,
            fullscreenStyle.isFullscreen && !fullscreenStyle.supportsTabs {
             let alert = NSAlert()
-            alert.messageText = "Cannot Create New Tab"
-            alert.informativeText = "New tabs are unsupported while in non-native fullscreen. Exit fullscreen and try again."
+            alert.messageText = "Cannot Create New Session"
+            alert.informativeText = "New sessions are unsupported while in non-native fullscreen. Exit fullscreen and try again."
             alert.addButton(withTitle: "OK")
             alert.alertStyle = .warning
             alert.beginSheetModal(for: parent)
@@ -533,7 +533,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         // Setup our undo
         if let undoManager = parentController.undoManager {
-            undoManager.setActionName("New Tab")
+            undoManager.setActionName("New Session")
             undoManager.registerUndo(
                 withTarget: controller,
                 expiresAfter: controller.undoExpiration
@@ -732,7 +732,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // Undo
         if let undoManager, let undoState {
             // Register undo action to restore the tab
-            undoManager.setActionName("Close Tab")
+            undoManager.setActionName("Close Session")
             undoManager.registerUndo(
                 withTarget: ghostty,
                 expiresAfter: undoExpiration
@@ -779,7 +779,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         if let undoManager {
-            undoManager.setActionName("Close Other Tabs")
+            undoManager.setActionName("Close Other Sessions")
 
             // We need to register an undo that refocuses this window. Otherwise, the
             // undo operation above for each tab will steal focus.
@@ -822,7 +822,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         if let undoManager {
-            undoManager.setActionName("Close Tabs to the Right")
+            undoManager.setActionName("Close Sessions to the Right")
 
             undoManager.registerUndo(
                 withTarget: self,
@@ -1360,8 +1360,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         confirmClose(
-            messageText: "Close Tab?",
-            informativeText: "The terminal still has a running process. If you close the tab the process will be killed."
+            messageText: "Close Session?",
+            informativeText: "The terminal still has a running process. If you close the session the process will be killed."
         ) {
             self.closeTabImmediately()
         }
@@ -1392,8 +1392,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         confirmClose(
-            messageText: "Close Other Tabs?",
-            informativeText: "At least one other tab still has a running process. If you close the tab the process will be killed."
+            messageText: "Close Other Sessions?",
+            informativeText: "At least one other session still has a running process. If you close the session the process will be killed."
         ) {
             self.closeOtherTabsImmediately()
         }
@@ -1421,8 +1421,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         confirmClose(
-            messageText: "Close Tabs on the Right?",
-            informativeText: "At least one tab to the right still has a running process. If you close the tab the process will be killed."
+            messageText: "Close Sessions on the Right?",
+            informativeText: "At least one session to the right still has a running process. If you close the session the process will be killed."
         ) {
             self.closeTabsOnTheRightImmediately()
         }
@@ -1788,7 +1788,7 @@ extension TerminalController {
 
         case #selector(toggleTabSidebar):
             let settings = TabSidebarSettings.shared
-            item.title = settings.isEnabled && !settings.isCollapsed ? "Hide Tab Sidebar" : "Show Tab Sidebar"
+            item.title = settings.isEnabled && !settings.isCollapsed ? "Hide Session Sidebar" : "Show Session Sidebar"
             return (window as? TerminalWindow)?.supportsTabSidebar ?? false
 
         case #selector(toggleVerticalTabs):

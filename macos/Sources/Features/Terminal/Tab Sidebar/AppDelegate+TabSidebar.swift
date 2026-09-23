@@ -8,14 +8,14 @@ extension AppDelegate {
             .submenu else { return }
 
         let toggleSidebar = NSMenuItem(
-            title: "Show Tab Sidebar",
+            title: "Show Session Sidebar",
             action: #selector(TerminalController.toggleTabSidebar(_:)),
             keyEquivalent: "b")
         toggleSidebar.keyEquivalentModifierMask = [.command]
         toggleSidebar.setImageIfDesired(systemSymbolName: "sidebar.left")
 
         let verticalTabs = NSMenuItem(
-            title: "Vertical Tabs",
+            title: "Vertical Sessions",
             action: #selector(TerminalController.toggleVerticalTabs(_:)),
             keyEquivalent: "")
 

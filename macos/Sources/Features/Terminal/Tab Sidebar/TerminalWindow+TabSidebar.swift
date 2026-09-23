@@ -154,7 +154,7 @@ extension TerminalWindow {
 
         if !installed {
             let button = NSButton(
-                image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Tab Sidebar")!,
+                image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Session Sidebar")!,
                 target: nil,
                 action: #selector(TerminalController.toggleTabSidebar(_:)))
             button.isBordered = false
@@ -182,6 +182,6 @@ extension TerminalWindow {
         let collapsed = TabSidebarSettings.shared.isCollapsed
         accessory.view.subviews
             .compactMap { $0 as? NSButton }
-            .forEach { $0.toolTip = collapsed ? "Show Tab Sidebar (⌘B)" : "Hide Tab Sidebar (⌘B)" }
+            .forEach { $0.toolTip = collapsed ? "Show Session Sidebar (⌘B)" : "Hide Session Sidebar (⌘B)" }
     }
 }

@@ -127,7 +127,7 @@ struct TabSidebarView: View {
             Button {
                 model.newTab()
             } label: {
-                Label("New Tab", systemImage: "plus")
+                Label("New Session", systemImage: "plus")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
@@ -135,7 +135,7 @@ struct TabSidebarView: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
-            .help("New Tab")
+            .help("New Session")
         }
         .background(TabSidebarVisualEffectBackground())
         .overlay(alignment: .trailing) { resizeHandle }
@@ -237,7 +237,7 @@ private struct TabSidebarGroupHeader: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("New Tab in Group")
+                .help("New Session in Group")
             }
         }
         .padding(.horizontal, 6)
@@ -289,7 +289,7 @@ private struct TabSidebarGroupHeader: View {
 
     @ViewBuilder
     private var contextMenu: some View {
-        Button("New Tab in Group") { model.newTab(inGroup: group.id) }
+        Button("New Session in Group") { model.newTab(inGroup: group.id) }
         Button("Rename Group…") { model.beginRename(group: group.id) }
         TabSidebarColorMenu(title: "Group Color", choices: TerminalTabColor.groupChoices, selected: group.color) { color in
             model.setColor(color, forGroup: group.id)
@@ -328,7 +328,7 @@ private struct TabSidebarTabRow: View {
             }
 
             if isEditing {
-                TextField("Tab Title", text: $model.editingDraft)
+                TextField("Session Title", text: $model.editingDraft)
                     .textFieldStyle(.plain)
                     .focused($fieldFocused)
                     .onAppear { DispatchQueue.main.async { fieldFocused = true } }
@@ -366,7 +366,7 @@ private struct TabSidebarTabRow: View {
                 }
                 .buttonStyle(.plain)
                 .opacity(0.8)
-                .help("Close Tab")
+                .help("Close Session")
             } else if let keyEquivalent = tab.keyEquivalent {
                 Text(keyEquivalent)
                     .font(.system(size: 11))
@@ -450,17 +450,17 @@ private struct TabSidebarTabRow: View {
     @ViewBuilder
     private var contextMenu: some View {
         if let window = tab.window {
-            Button("Rename Tab…") { model.beginRename(window) }
-            TabSidebarColorMenu(title: "Tab Color", choices: TerminalTabColor.tabChoices, selected: tab.assignedColor) { color in
+            Button("Rename Session…") { model.beginRename(window) }
+            TabSidebarColorMenu(title: "Session Color", choices: TerminalTabColor.tabChoices, selected: tab.assignedColor) { color in
                 model.setColor(color, for: window)
             }
 
             Divider()
 
-            Button("Add Tab to New Group") { model.createGroup(with: window) }
+            Button("Add Session to New Group") { model.createGroup(with: window) }
             let otherGroups = model.groupsInWindow.filter { $0.id != tab.groupID }
             if !otherGroups.isEmpty {
-                Menu("Add Tab to Group") {
+                Menu("Add Session to Group") {
                     ForEach(otherGroups) { group in
                         Button(group.name) { model.add(window, to: group.id) }
                     }
@@ -472,13 +472,13 @@ private struct TabSidebarTabRow: View {
 
             Divider()
 
-            Button("Move Tab to New Window") { model.moveToNewWindow(window) }
+            Button("Move Session to New Window") { model.moveToNewWindow(window) }
 
             Divider()
 
-            Button("Close Tab") { model.close(window) }
-            Button("Close Other Tabs") { model.closeOthers(window) }
-            Button("Close Tabs Below") { model.closeBelow(window) }
+            Button("Close Session") { model.close(window) }
+            Button("Close Other Sessions") { model.closeOthers(window) }
+            Button("Close Sessions Below") { model.closeBelow(window) }
         }
     }
 }

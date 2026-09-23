@@ -961,8 +961,8 @@ extension Ghostty {
                 guard let appState = self.appState(fromView: surfaceView) else { return }
                 guard appState.config.windowDecorations else {
                     let alert = NSAlert()
-                    alert.messageText = "Tabs are disabled"
-                    alert.informativeText = "Enable window decorations to use tabs"
+                    alert.messageText = "Sessions are disabled"
+                    alert.informativeText = "Enable window decorations to use sessions"
                     alert.addButton(withTitle: "OK")
                     alert.alertStyle = .warning
                     _ = alert.runModal()
