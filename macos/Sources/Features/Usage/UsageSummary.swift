@@ -283,6 +283,27 @@ enum UsageFormat {
         }
     }
 
+    private static let resetFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.setLocalizedDateFormatFromTemplate("EEE jmm")
+        return formatter
+    }()
+
+    /// When a plan window resets, as `Resets in 2 hr 18 min` within a day, and as
+    /// `Resets Sat 7:00 AM` beyond that.
+    static func reset(_ date: Date, now: Date = Date()) -> String {
+        let interval = date.timeIntervalSince(now)
+        guard interval > 0 else { return "Resetting now" }
+
+        if interval < 24 * 60 * 60 {
+            let minutes = Int(interval / 60)
+            guard minutes >= 60 else { return "Resets in \(max(minutes, 1)) min" }
+            return "Resets in \(minutes / 60) hr \(minutes % 60) min"
+        }
+        return "Resets " + resetFormatter.string(from: date)
+    }
+
     /// The window as `Aug 24 to Sep 22`, or `Sep 21, 10 PM to Sep 22, 10 PM`.
     static func window(_ window: UsageWindow) -> String {
         if let hourly = window.hourly {

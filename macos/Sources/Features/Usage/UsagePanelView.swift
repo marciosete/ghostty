@@ -84,11 +84,12 @@ struct UsagePanelView: View {
             } else {
                 Button {
                     model.refresh(refreshRates: true)
+                    model.refreshLimits(force: true)
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
-                .help("Rescan transcripts and update model prices")
+                .help("Check plan limits, rescan transcripts and update model prices")
             }
         }
         .frame(width: 20, height: 20)
@@ -101,6 +102,11 @@ struct UsagePanelView: View {
         if let summary = model.summary {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
+                    // Nothing to say when Claude Code isn't installed.
+                    if let limits = model.limits, limits.unavailable != .cliMissing {
+                        planLimits(limits)
+                    }
+
                     if summary.activeProviders.isEmpty {
                         emptyState
                     } else {
@@ -138,6 +144,100 @@ struct UsagePanelView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Plan Limits
+
+    /// The account and its plan windows, as the Claude settings page shows them: what
+    /// the rolling session and the weekly windows have used, and when they reset.
+    private func planLimits(_ limits: ClaudeLimits) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                UsageProviderMark(provider: .claude)
+                    .frame(width: 13, height: 13)
+
+                if let account = limits.account {
+                    Text(account.label)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let plan = account.planLabel {
+                        Text(plan)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("Claude Code")
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+            }
+            .font(.system(size: 12))
+            .help(accountHelp(limits))
+
+            if limits.windows.isEmpty {
+                Text(limitsUnavailableNote(limits))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 11) {
+                    ForEach(limits.windows) { window in
+                        planLimitRow(window)
+                    }
+                }
+            }
+        }
+    }
+
+    private func planLimitRow(_ window: ClaudeLimitWindow) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(window.label)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text("\(Int(window.usedPercent.rounded()))% used")
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
+
+            UsageLimitBar(fraction: window.usedPercent / 100, color: window.barColor)
+
+            if let resetsAt = window.resetsAt {
+                Text(UsageFormat.reset(resetsAt))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func accountHelp(_ limits: ClaudeLimits) -> String {
+        guard let account = limits.account else { return "Claude Code isn't signed in." }
+        var lines: [String] = []
+        if let email = account.email { lines.append(email) }
+        if let organization = account.organizationName, organization != account.email {
+            lines.append(organization)
+        }
+        if let plan = account.planLabel { lines.append("\(plan) plan") }
+        lines.append("Checked \(relative(limits.checkedAt))")
+        return lines.joined(separator: "\n")
+    }
+
+    private func relative(_ date: Date) -> String {
+        Date().timeIntervalSince(date) < 60
+            ? "just now"
+            : RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+    }
+
+    private func limitsUnavailableNote(_ limits: ClaudeLimits) -> String {
+        switch limits.unavailable {
+        case .signedOut: "Not signed in. Run claude auth login to see plan limits."
+        case .noPlanLimits: "This login reports no plan limits, which is what an API key or a Bedrock or Vertex account does."
+        case .failed: "Claude Code didn't report plan limits."
+        case .cliMissing, .none: ""
         }
     }
 
@@ -394,6 +494,37 @@ struct UsagePanelView: View {
 // MARK: - Table
 
 /// A row of the breakdown tables, with a divider below and a highlight on hover.
+/// How much of a plan window is used.
+private struct UsageLimitBar: View {
+    let fraction: Double
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.12))
+                Capsule()
+                    .fill(color)
+                    .frame(width: min(max(fraction, 0), 1) * geometry.size.width)
+            }
+        }
+        .frame(height: 5)
+    }
+}
+
+private extension ClaudeLimitWindow {
+    /// Normal windows take the accent color, as the Claude settings page does. The
+    /// severity the CLI reports colors a window that's close to its limit.
+    var barColor: Color {
+        switch severity {
+        case .normal: .accentColor
+        case .warning: .orange
+        case .critical: .red
+        }
+    }
+}
+
 /// The widths of the numeric columns of the breakdown tables.
 private enum UsageColumn {
     static let money: CGFloat = 76

@@ -64,6 +64,9 @@ final class UsagePanelModel: ObservableObject {
     /// The latest scan's usage, or nil until the first scan finishes.
     @Published private(set) var summary: UsageSummary?
 
+    /// The plan limits of the Claude Code CLI, or nil until they're first read.
+    @Published private(set) var limits: ClaudeLimits?
+
     @Published private(set) var isScanning = false
 
     @Published var breakdown: Breakdown = .model
@@ -75,6 +78,17 @@ final class UsagePanelModel: ObservableObject {
     /// Scans run in order, so only the latest one's result is shown.
     private var latestScan = 0
 
+    /// Asking the CLI costs a couple of seconds, so an automatic check waits at least
+    /// this long after the last one. An explicit refresh ignores it.
+    private static let limitsMinimumInterval: TimeInterval = 5 * 60
+
+    /// How often the limits are re-read while the panel is open.
+    private static let limitsRefreshInterval: TimeInterval = 5 * 60
+
+    private let limitsQueue = DispatchQueue(label: "com.mitchellh.ghostty.usage-limits", qos: .userInitiated)
+    private var limitsTimer: Timer?
+    private var isReadingLimits = false
+
     init(scanner: UsageScanner = .shared, settings: UsageSettings = .shared) {
         self.scanner = scanner
         self.settings = settings
@@ -83,8 +97,17 @@ final class UsagePanelModel: ObservableObject {
         // passed along rather than read back.
         settings.$isVisible
             .removeDuplicates()
-            .filter { $0 }
-            .sink { [weak self] _ in self?.refresh() }
+            .sink { [weak self] isVisible in
+                guard let self else { return }
+                guard isVisible else {
+                    self.limitsTimer?.invalidate()
+                    self.limitsTimer = nil
+                    return
+                }
+                self.refresh()
+                self.refreshLimits()
+                self.startLimitsTimer()
+            }
             .store(in: &cancellables)
 
         settings.$windowDays
@@ -92,6 +115,36 @@ final class UsagePanelModel: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] days in self?.refresh(days: days) }
             .store(in: &cancellables)
+    }
+
+    /// Reads the plan limits again. Automatic checks are spaced out; `force` is the
+    /// refresh button and ignores that.
+    func refreshLimits(force: Bool = false) {
+        if !force, let checkedAt = limits?.checkedAt,
+           Date().timeIntervalSince(checkedAt) < Self.limitsMinimumInterval {
+            return
+        }
+        guard !isReadingLimits else { return }
+
+        isReadingLimits = true
+        limitsQueue.async { [weak self] in
+            let limits = ClaudeLimitsReader.read()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.limits = limits
+                self.isReadingLimits = false
+            }
+        }
+    }
+
+    private func startLimitsTimer() {
+        limitsTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.limitsRefreshInterval, repeats: true) { [weak self] _ in
+            self?.refreshLimits()
+        }
+        // The common mode keeps it firing while a menu is open or the panel scrolls.
+        RunLoop.main.add(timer, forMode: .common)
+        limitsTimer = timer
     }
 
     /// Scans the transcripts again. `refreshRates` also downloads the model prices again.
