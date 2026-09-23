@@ -75,123 +75,6 @@ struct UsageClaudeParserTests {
     }
 }
 
-// MARK: - Codex
-
-struct UsageCodexParserTests {
-    private let sessionMeta = json([
-        "type": "session_meta",
-        "timestamp": "2026-08-01T05:17:41.289Z",
-        "payload": ["type": "session_meta", "id": "019fbbc1"],
-    ])
-
-    private let turnContext = json([
-        "type": "turn_context",
-        "timestamp": "2026-08-01T05:17:42.694Z",
-        "payload": ["type": "turn_context", "model": "gpt-5.6-sol"],
-    ])
-
-    private func tokenCount(_ input: Int, _ cached: Int, _ output: Int, _ reasoning: Int, at timestamp: String = "2026-08-01T05:17:49.919Z") -> Data {
-        json([
-            "type": "event_msg",
-            "timestamp": timestamp,
-            "payload": [
-                "type": "token_count",
-                "info": [
-                    "last_token_usage": [
-                        "input_tokens": input,
-                        "cached_input_tokens": cached,
-                        "cache_write_input_tokens": 0,
-                        "output_tokens": output,
-                        "reasoning_output_tokens": reasoning,
-                    ],
-                ],
-            ],
-        ])
-    }
-
-    private func meta(id: String, at timestamp: String, forkedFrom: String? = nil, spawnedBy: String? = nil) -> Data {
-        var payload: [String: Any] = ["type": "session_meta", "id": id]
-        if let forkedFrom { payload["forked_from_id"] = forkedFrom }
-        if let spawnedBy {
-            payload["source"] = ["subagent": ["thread_spawn": ["parent_thread_id": spawnedBy]]]
-        }
-        return json(["type": "session_meta", "timestamp": timestamp, "payload": payload])
-    }
-
-    private func turnContext(at timestamp: String) -> Data {
-        json(["type": "turn_context", "timestamp": timestamp, "payload": ["type": "turn_context", "model": "gpt-5.6-sol"]])
-    }
-
-    @Test func attributesUsageToTheTurnContextModel() throws {
-        var state = UsageTranscripts.CodexScanState()
-        _ = UsageTranscripts.parseCodexLine(sessionMeta, state: &state)
-        _ = UsageTranscripts.parseCodexLine(turnContext, state: &state)
-        let record = try #require(UsageTranscripts.parseCodexLine(tokenCount(19239, 11008, 299, 116), state: &state))
-
-        #expect(record.model == "gpt-5.6-sol")
-        #expect(record.sessionId == "019fbbc1")
-        // Codex reports input_tokens including the cached part.
-        #expect(record.totals.uncachedInput == 19239 - 11008)
-        #expect(record.totals.cachedInput == 11008)
-        #expect(record.totals.reasoning == 116)
-        #expect(record.totals.total == 19239 + 299)
-    }
-
-    @Test func skipsARepeatedTokenCount() {
-        var state = UsageTranscripts.CodexScanState()
-        _ = UsageTranscripts.parseCodexLine(turnContext, state: &state)
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(100, 0, 10, 0), state: &state) != nil)
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(100, 0, 10, 0), state: &state) == nil)
-    }
-
-    @Test func aPreModelEventDoesNotPoisonTheSignature() {
-        var state = UsageTranscripts.CodexScanState()
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(100, 0, 10, 0), state: &state) == nil)
-        _ = UsageTranscripts.parseCodexLine(turnContext, state: &state)
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(100, 0, 10, 0), state: &state) != nil)
-    }
-
-    @Test func keepsTheChildSessionOverCopiedAncestorMetas() {
-        var state = UsageTranscripts.CodexScanState()
-        _ = UsageTranscripts.parseCodexLine(meta(id: "child", at: "2026-08-01T05:00:00.000Z"), state: &state)
-        _ = UsageTranscripts.parseCodexLine(meta(id: "parent", at: "2026-08-01T05:00:00.000Z"), state: &state)
-        _ = UsageTranscripts.parseCodexLine(turnContext, state: &state)
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(100, 0, 10, 0), state: &state)?.sessionId == "child")
-    }
-
-    @Test func dropsTheCopiedBurstOfAFork() {
-        var state = UsageTranscripts.CodexScanState()
-        let fork = "2026-08-01T05:00:00.000Z"
-        _ = UsageTranscripts.parseCodexLine(meta(id: "child", at: fork, forkedFrom: "parent"), state: &state)
-        _ = UsageTranscripts.parseCodexLine(meta(id: "parent", at: fork), state: &state)
-        _ = UsageTranscripts.parseCodexLine(turnContext(at: fork), state: &state)
-
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(100, 0, 10, 0, at: "2026-08-01T05:00:00.001Z"), state: &state) == nil)
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(200, 0, 20, 0, at: "2026-08-01T05:00:00.002Z"), state: &state) == nil)
-
-        let real = UsageTranscripts.parseCodexLine(tokenCount(300, 0, 30, 0, at: "2026-08-01T05:00:06.000Z"), state: &state)
-        #expect(real?.totals.output == 30)
-
-        // Suppression never restarts.
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(400, 0, 40, 0, at: "2026-08-01T05:00:06.100Z"), state: &state) != nil)
-    }
-
-    @Test func recognizesSubagentSpawns() {
-        var state = UsageTranscripts.CodexScanState()
-        let spawn = "2026-08-01T05:00:00.000Z"
-        _ = UsageTranscripts.parseCodexLine(meta(id: "child", at: spawn, spawnedBy: "parent"), state: &state)
-        _ = UsageTranscripts.parseCodexLine(turnContext(at: spawn), state: &state)
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(100, 0, 10, 0, at: "2026-08-01T05:00:00.001Z"), state: &state) == nil)
-    }
-
-    @Test func doesNotSuppressARolloutThatIsNotAFork() {
-        var state = UsageTranscripts.CodexScanState()
-        _ = UsageTranscripts.parseCodexLine(meta(id: "root", at: "2026-08-01T05:00:00.000Z"), state: &state)
-        _ = UsageTranscripts.parseCodexLine(turnContext(at: "2026-08-01T05:00:00.100Z"), state: &state)
-        #expect(UsageTranscripts.parseCodexLine(tokenCount(100, 0, 10, 0, at: "2026-08-01T05:00:00.200Z"), state: &state) != nil)
-    }
-}
-
 // MARK: - Grok Build
 
 struct UsageGrokParserTests {
@@ -516,19 +399,13 @@ struct UsageTranscriptReaderTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let parsed = try #require(UsageTranscriptReader.read(path: url.path, provider: .claude))
 
-        let codexState = UsageTranscripts.CodexScanState(
-            model: "gpt", sessionId: "s", lastUsageSignature: nil,
-            sawSessionMeta: true, suppressingForkCopies: false, forkCopyAnchorMs: 5)
-        var codexPosition = parsed.position
-        codexPosition.codexState = codexState
-
         let cache = [
             "/a.jsonl": UsageCachedTranscript(
                 size: 10, mtimeNs: 1_786_000_000_123_456_789, provider: .claude,
                 records: parsed.records, tailRecords: parsed.tailRecords, position: parsed.position),
             "/b.jsonl": UsageCachedTranscript(
-                size: 20, mtimeNs: 1, provider: .codex,
-                records: [], tailRecords: [], position: codexPosition),
+                size: 20, mtimeNs: 1, provider: .grok,
+                records: [], tailRecords: [], position: parsed.position),
         ]
         let data = try #require(UsageScanCache.encode(cache))
         #expect(UsageScanCache.decode(data) == cache)

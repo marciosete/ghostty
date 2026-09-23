@@ -8,7 +8,6 @@ import Foundation
 /// A coding agent whose on-disk session transcripts usage is read from.
 enum UsageProvider: String, CaseIterable {
     // Declaration order is the reading order of every chart, row and table.
-    case codex
     case claude
     case grok
 }
@@ -16,8 +15,8 @@ enum UsageProvider: String, CaseIterable {
 /// Token counts of one or more usage events.
 ///
 /// `cachedInput` and `cacheCreation` are disjoint from `uncachedInput`, so the three sum
-/// to the total input. `reasoning` is a subset of `output` (Codex reports it that way,
-/// and Anthropic folds thinking into output), so it's never added on top.
+/// to the total input. `reasoning` is a subset of `output` (Grok reports it that way, and
+/// Anthropic folds thinking into output), so it's never added on top.
 struct UsageTokenTotals: Equatable {
     var uncachedInput = 0
     var cachedInput = 0
@@ -96,123 +95,6 @@ enum UsageTranscripts {
             dedupeKey: dedupeKey)
     }
 
-    // MARK: Codex
-
-    /// The running state of one Codex rollout file.
-    ///
-    /// Codex `token_count` events carry no model, so the model is carried forward from
-    /// the latest `turn_context`.
-    struct CodexScanState: Equatable {
-        var model = ""
-        var sessionId = ""
-        var lastUsageSignature: String?
-        var sawSessionMeta = false
-
-        /// While true, leading usage events are re-stamped copies of the parent's history.
-        var suppressingForkCopies = false
-        var forkCopyAnchorMs = 0
-    }
-
-    /// A forked or subagent rollout opens with its parent's full history copied in, every
-    /// line re-stamped to the fork instant in one burst (gaps of 0-40ms), while the
-    /// child's first real usage event only lands after a model turn (5s or more). One
-    /// second tells them apart; ccusage uses the same threshold.
-    private static let forkCopyMaxGapMs = 1000
-
-    /// Feeds one line of a Codex rollout into `state`, returning a record when the line
-    /// was a usage event.
-    ///
-    /// Usage comes from `last_token_usage`. Summed over a session it reconciles with the
-    /// session's final `total_token_usage`, as long as repeated identical events are
-    /// dropped, which this does.
-    static func parseCodexLine(_ line: Data, state: inout CodexScanState) -> UsageRecord? {
-        guard let record = UsageJSON.object(line),
-              let payload = record["payload"] as? [String: Any] else { return nil }
-
-        switch record["type"] as? String {
-        case "session_meta":
-            // Only the first meta describes this file's own session. A forked rollout
-            // repeats its ancestors' metas right after it.
-            guard !state.sawSessionMeta else { return nil }
-            state.sawSessionMeta = true
-            if let id = (payload["id"] ?? payload["session_id"]) as? String {
-                state.sessionId = id
-            }
-            if let metaMs = UsageTimestamp.milliseconds(record["timestamp"]),
-               isForkedSessionMeta(payload) {
-                state.suppressingForkCopies = true
-                state.forkCopyAnchorMs = metaMs
-            }
-            return nil
-
-        case "turn_context":
-            if let model = payload["model"] as? String {
-                state.model = model
-            }
-            return nil
-
-        default:
-            break
-        }
-
-        // An event that arrives before its turn_context (no model yet) must not take the
-        // duplicate signature, or its re-emitted copy would be skipped once the model
-        // is known.
-        guard payload["type"] as? String == "token_count",
-              let info = payload["info"] as? [String: Any],
-              let last = info["last_token_usage"] as? [String: Any],
-              let timestampMs = UsageTimestamp.milliseconds(record["timestamp"]),
-              !state.model.isEmpty else { return nil }
-
-        // Codex re-emits an unchanged token_count on some stream boundaries.
-        let signature = UsageJSON.signature(last)
-        guard signature != state.lastUsageSignature else { return nil }
-        state.lastUsageSignature = signature
-
-        // The copied parent history of a fork was already counted from the parent's own
-        // file. The first event separated from the previous one by a real turn ends it.
-        if state.suppressingForkCopies {
-            if timestampMs - state.forkCopyAnchorMs < forkCopyMaxGapMs {
-                state.forkCopyAnchorMs = timestampMs
-                return nil
-            }
-            state.suppressingForkCopies = false
-        }
-
-        let input = UsageJSON.count(last["input_tokens"])
-        let cachedInput = UsageJSON.count(last["cached_input_tokens"])
-        let cacheCreation = UsageJSON.count(last["cache_write_input_tokens"])
-        let output = UsageJSON.count(last["output_tokens"])
-        let totals = UsageTokenTotals(
-            // Codex reports input_tokens including the cached part.
-            uncachedInput: max(0, input - cachedInput - cacheCreation),
-            cachedInput: cachedInput,
-            cacheCreation: cacheCreation,
-            output: output,
-            reasoning: min(output, UsageJSON.count(last["reasoning_output_tokens"])))
-        guard totals.total > 0 else { return nil }
-
-        return UsageRecord(
-            provider: .codex,
-            timestampMs: timestampMs,
-            model: state.model,
-            sessionId: state.sessionId,
-            totals: totals,
-            // Codex doesn't report cost in the rollout.
-            reportedCostUsd: nil,
-            // Events that survive the fork copy suppression are unique to this rollout.
-            dedupeKey: nil)
-    }
-
-    /// Whether a `session_meta` payload marks the rollout as a fork or a subagent.
-    private static func isForkedSessionMeta(_ payload: [String: Any]) -> Bool {
-        if payload["forked_from_id"] is String { return true }
-        guard let source = payload["source"] as? [String: Any],
-              let subagent = source["subagent"] as? [String: Any],
-              let spawn = subagent["thread_spawn"] as? [String: Any] else { return false }
-        return spawn["parent_thread_id"] is String
-    }
-
     // MARK: Grok Build
 
     /// Grok reports cost in integer ticks, 10^10 to the dollar.
@@ -243,7 +125,7 @@ enum UsageTranscripts {
 
         var usage: UsageTokenTotals {
             UsageTokenTotals(
-                // Grok reports inputTokens including the cached part, as Codex does.
+                // Grok reports inputTokens including the cached part.
                 uncachedInput: max(0, input - cachedRead - cacheCreation),
                 cachedInput: cachedRead,
                 cacheCreation: cacheCreation,

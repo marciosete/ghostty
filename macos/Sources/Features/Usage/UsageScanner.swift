@@ -122,9 +122,6 @@ final class UsageScanner {
             sources.append(Source(provider: .claude, directory: home.appendingPathComponent(".claude/projects"), fileName: nil))
         }
 
-        let codexHome = configured("CODEX_HOME") ?? home.appendingPathComponent(".codex")
-        sources.append(Source(provider: .codex, directory: codexHome + "/sessions", fileName: nil))
-
         let grokHome = configured("GROK_HOME") ?? home.appendingPathComponent(".grok")
         sources.append(Source(provider: .grok, directory: grokHome + "/sessions", fileName: "updates.jsonl"))
 
@@ -182,20 +179,7 @@ final class UsageScanner {
 
             var sessions: Set<String> = []
             for file in files {
-                var codexOccurrences: [String: Int] = [:]
-                for var record in file.records {
-                    if record.provider == .codex, !record.sessionId.isEmpty {
-                        // A rollout moved to another folder is counted once, without
-                        // merging repeated identical events within one rollout
-                        // (timestamps can have only second precision).
-                        let totals = record.totals
-                        let key = "\(record.sessionId)\u{0}\(record.timestampMs)\u{0}\(record.model)\u{0}"
-                            + "\(totals.uncachedInput),\(totals.cachedInput),\(totals.cacheCreation),\(totals.output),\(totals.reasoning)"
-                        let occurrence = (codexOccurrences[key] ?? 0) + 1
-                        codexOccurrences[key] = occurrence
-                        record.dedupeKey = "codex\u{0}\(key):\(occurrence)"
-                    }
-
+                for record in file.records {
                     // Only sessions with usage in the window count. The modification
                     // time slack lets in files whose records fall outside it.
                     if aggregator.add(record), !record.sessionId.isEmpty {

@@ -73,7 +73,7 @@ enum UsageScanCache {
 
         var files: [String: Any] = [:]
         for (path, entry) in cache {
-            var file: [String: Any] = [
+            let file: [String: Any] = [
                 "s": entry.size,
                 "m": entry.mtimeNs,
                 "p": entry.provider.rawValue,
@@ -83,16 +83,6 @@ enum UsageScanCache {
                 "gl": entry.position.guardLength,
                 "gh": Int(entry.position.guardHash),
             ]
-            if let state = entry.position.codexState {
-                file["cs"] = [
-                    "model": state.model,
-                    "session": state.sessionId,
-                    "signature": state.lastUsageSignature ?? NSNull(),
-                    "meta": state.sawSessionMeta,
-                    "fork": state.suppressingForkCopies,
-                    "anchor": state.forkCopyAnchorMs,
-                ] as [String: Any]
-            }
             files[path] = file
         }
 
@@ -159,22 +149,6 @@ enum UsageScanCache {
                   let records = decodeRecords(file["r"], provider),
                   let tailRecords = decodeRecords(file["t"], provider) else { continue }
 
-            var codexState: UsageTranscripts.CodexScanState?
-            if let state = file["cs"] as? [String: Any] {
-                guard let model = state["model"] as? String,
-                      let session = state["session"] as? String,
-                      let meta = state["meta"] as? Bool,
-                      let fork = state["fork"] as? Bool,
-                      let anchor = state["anchor"] as? Int else { continue }
-                codexState = UsageTranscripts.CodexScanState(
-                    model: model,
-                    sessionId: session,
-                    lastUsageSignature: state["signature"] as? String,
-                    sawSessionMeta: meta,
-                    suppressingForkCopies: fork,
-                    forkCopyAnchorMs: anchor)
-            }
-
             cache[path] = UsageCachedTranscript(
                 size: size,
                 mtimeNs: mtimeNs,
@@ -184,8 +158,7 @@ enum UsageScanCache {
                 position: UsageParsePosition(
                     resumeOffset: resumeOffset,
                     guardLength: guardLength,
-                    guardHash: guardHash,
-                    codexState: codexState))
+                    guardHash: guardHash))
         }
         return cache
     }

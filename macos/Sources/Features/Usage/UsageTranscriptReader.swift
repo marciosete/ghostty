@@ -20,9 +20,6 @@ struct UsageParsePosition: Equatable {
     var resumeOffset: Int
     var guardLength: Int
     var guardHash: UInt32
-
-    /// The Codex parser's state at `resumeOffset`, or nil for the other providers.
-    var codexState: UsageTranscripts.CodexScanState?
 }
 
 struct UsageParseResult {
@@ -88,15 +85,11 @@ enum UsageTranscriptReader {
         guard fd >= 0 else { return nil }
         defer { close(fd) }
 
-        var parser = LineParser(provider: provider)
+        let parser = LineParser(provider: provider)
         var start = 0
         var resumed = false
         if let resume, resume.resumeOffset > 0,
-           provider != .codex || resume.codexState != nil,
            guardHash(fd: fd, end: resume.resumeOffset, length: resume.guardLength) == resume.guardHash {
-            if let codexState = resume.codexState {
-                parser.codexState = codexState
-            }
             start = resume.resumeOffset
             resumed = true
         }
@@ -145,8 +138,7 @@ enum UsageTranscriptReader {
         // writer may still be appending to it.
         var tailRecords: [UsageRecord] = []
         if !pending.isEmpty {
-            var tailParser = parser
-            pending.withUnsafeBytes { tailParser.parse($0, into: &tailRecords) }
+            pending.withUnsafeBytes { parser.parse($0, into: &tailRecords) }
         }
 
         let guardLength = min(Self.guardLength, resumeOffset)
@@ -162,8 +154,7 @@ enum UsageTranscriptReader {
             position: UsageParsePosition(
                 resumeOffset: resumeOffset,
                 guardLength: guardLength,
-                guardHash: hash,
-                codexState: provider == .codex ? parser.codexState : nil),
+                guardHash: hash),
             resumed: resumed)
     }
 
@@ -190,13 +181,8 @@ enum UsageTranscriptReader {
 /// decoding any JSON. Transcripts are mostly tool output, so this skips most of them.
 private struct LineParser {
     let provider: UsageProvider
-    var codexState = UsageTranscripts.CodexScanState()
 
-    init(provider: UsageProvider) {
-        self.provider = provider
-    }
-
-    mutating func parse(_ line: UnsafeRawBufferPointer, into records: inout [UsageRecord]) {
+    func parse(_ line: UnsafeRawBufferPointer, into records: inout [UsageRecord]) {
         var line = line
         if line.last == 0x0D {
             line = UnsafeRawBufferPointer(rebasing: line.dropLast())
@@ -207,16 +193,6 @@ private struct LineParser {
         case .claude:
             guard Self.contains(line, "\"usage\"") else { return }
             if let record = UsageTranscripts.parseClaudeLine(Self.data(line)) {
-                records.append(record)
-            }
-
-        case .codex:
-            // turn_context and session_meta lines carry no usage of their own but set the
-            // model and session of the events that follow.
-            guard Self.contains(line, "\"token_count\"")
-                || Self.contains(line, "\"turn_context\"")
-                || Self.contains(line, "\"session_meta\"") else { return }
-            if let record = UsageTranscripts.parseCodexLine(Self.data(line), state: &codexState) {
                 records.append(record)
             }
 

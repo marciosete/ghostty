@@ -134,7 +134,7 @@ struct UsagePanelView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("No usage in this period")
-            Text("Usage is read from the session transcripts of Claude Code (~/.claude), Codex (~/.codex) and Grok Build (~/.grok).")
+            Text("Usage is read from the session transcripts of Claude Code (~/.claude) and Grok Build (~/.grok).")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -594,25 +594,22 @@ extension UsageProvider: Identifiable {
 
     var label: String {
         switch self {
-        case .codex: "Codex"
         case .claude: "Claude Code"
         case .grok: "Grok Build"
         }
     }
 
-    /// The provider's color in charts and legends. Codex takes the text color, as on
+    /// The provider's color in charts and legends. Grok takes the text color, as on
     /// T3 Code, so it reads white in dark mode and black in light mode.
     var color: Color {
         switch self {
-        case .codex: .primary
         case .claude: Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
-        case .grok: .primary.opacity(0.72)
+        case .grok: .primary
         }
     }
 
     fileprivate var markImageName: String {
         switch self {
-        case .codex: "UsageOpenAIMark"
         case .claude: "UsageClaudeMark"
         case .grok: "UsageGrokMark"
         }
