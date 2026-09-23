@@ -27,7 +27,7 @@ class TerminalWindow: NSWindow {
 
     /// Visual indicator that mirrors the selected tab color.
     private lazy var tabColorIndicator: NSHostingView<TabColorIndicatorView> = {
-        let view = NSHostingView(rootView: TabColorIndicatorView(tabColor: shownTabColor))
+        let view = NSHostingView(rootView: TabColorIndicatorView(tabColor: shownTabColor, claudeCodeState: claudeCodeState))
         view.translatesAutoresizingMaskIntoConstraints = false
         return view
     }()
@@ -70,10 +70,10 @@ class TerminalWindow: NSWindow {
         }
     }
 
-    /// What the Claude Code session in this tab is doing, while the tab's color is `auto`.
-    var claudeCodeLight: ClaudeCodeLight? {
+    /// What the Claude Code sessions in this tab are doing, while the tab's color is `auto`.
+    var claudeCodeState: ClaudeCodeTabState? {
         didSet {
-            guard claudeCodeLight != oldValue else { return }
+            guard claudeCodeState != oldValue else { return }
             shownTabColorDidChange()
         }
     }
@@ -82,11 +82,11 @@ class TerminalWindow: NSWindow {
     /// what its Claude Code session is doing.
     var shownTabColor: TerminalTabColor {
         guard tabColor == .auto else { return tabColor }
-        return claudeCodeLight?.tabColor ?? .none
+        return claudeCodeState?.light.tabColor ?? .none
     }
 
     private func shownTabColorDidChange() {
-        tabColorIndicator.rootView = TabColorIndicatorView(tabColor: shownTabColor)
+        tabColorIndicator.rootView = TabColorIndicatorView(tabColor: shownTabColor, claudeCodeState: claudeCodeState)
         postTabSidebarItemDidChange()
     }
 
@@ -205,7 +205,7 @@ class TerminalWindow: NSWindow {
         // Setup the accessory view for tabs that shows our keyboard shortcuts,
         // zoomed state, etc. Note I tried to use SwiftUI here but ran into issues
         // where buttons were not clickable on macOS 15.
-        tabColorIndicator.rootView = TabColorIndicatorView(tabColor: shownTabColor)
+        tabColorIndicator.rootView = TabColorIndicatorView(tabColor: shownTabColor, claudeCodeState: claudeCodeState)
 
         let stackView = NSStackView()
         stackView.orientation = .horizontal
@@ -806,11 +806,23 @@ private struct TabColorIndicatorView: View {
     /// The tab color to display.
     let tabColor: TerminalTabColor
 
+    /// For an `auto` tab, what its Claude Code sessions are doing.
+    let claudeCodeState: ClaudeCodeTabState?
+
     var body: some View {
         if let color = tabColor.displayColor {
-            Circle()
-                .fill(Color(color))
-                .frame(width: 6, height: 6)
+            HStack(spacing: 3) {
+                Circle()
+                    .fill(Color(color))
+                    .frame(width: 6, height: 6)
+                if let badge = claudeCodeState?.badge {
+                    Text("\(badge)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .help(claudeCodeState?.badgeHelp ?? "")
         } else {
             Circle()
                 .fill(Color.clear)

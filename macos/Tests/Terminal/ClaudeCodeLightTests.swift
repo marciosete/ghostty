@@ -29,6 +29,39 @@ struct ClaudeCodeLightTests {
         #expect(ClaudeCodeLight.mostUrgent([]) == nil)
     }
 
+    // MARK: Tab state
+
+    @Test func badgeCountsPendingFilesWhileYellow() {
+        let state = ClaudeCodeTabState(light: .pending, pendingFiles: 3, editedFiles: 7)
+        #expect(state.badge == 3)
+        #expect(state.badgeHelp == "3 of 7 edited files not committed")
+        #expect(ClaudeCodeTabState(light: .clean, pendingFiles: 0, editedFiles: 7).badge == nil)
+        #expect(ClaudeCodeTabState(light: .working).badge == nil)
+    }
+
+    @Test func splitTabAddsUpItsSessions() {
+        let combined = ClaudeCodeTabState.combined([
+            ClaudeCodeTabState(light: .pending, pendingFiles: 2, editedFiles: 4),
+            ClaudeCodeTabState(light: .clean, pendingFiles: 0, editedFiles: 3),
+            ClaudeCodeTabState(light: .pending, pendingFiles: 1, editedFiles: 1),
+        ])
+        #expect(combined == ClaudeCodeTabState(light: .pending, pendingFiles: 3, editedFiles: 8))
+
+        // A session that needs attention hides the count.
+        let waiting = ClaudeCodeTabState.combined([
+            ClaudeCodeTabState(light: .pending, pendingFiles: 2, editedFiles: 4),
+            ClaudeCodeTabState(light: .waiting),
+        ])
+        #expect(waiting?.light == .waiting)
+        #expect(waiting?.badge == nil)
+        #expect(ClaudeCodeTabState.combined([]) == nil)
+    }
+
+    @Test func renamesCountOnce() {
+        let output = "R  new.swift\0old.swift\0 M a.swift\0?? b.swift\0"
+        #expect(Git.changedPaths(porcelain: output) == ["new.swift", "a.swift", "b.swift"])
+    }
+
     // MARK: Colors
 
     @Test func trafficLightColorsCantBePickedByHand() {
@@ -130,21 +163,25 @@ struct ClaudeCodeLightTests {
 
         // A new file is pending until it is committed.
         try Data("a".utf8).write(to: URL(fileURLWithPath: mine))
-        #expect(Git.hasUncommittedChanges([mine], in: repository) == true)
+        #expect(Git.uncommittedFileCount([mine], in: repository) == 1)
         try Self.git(["add", "."], in: root)
-        #expect(Git.hasUncommittedChanges([mine], in: repository) == true)
+        #expect(Git.uncommittedFileCount([mine], in: repository) == 1)
         try Self.git(["commit", "-q", "-m", "first"], in: root)
-        #expect(Git.hasUncommittedChanges([mine], in: repository) == false)
+        #expect(Git.uncommittedFileCount([mine], in: repository) == 0)
 
         // Another session's changes don't count.
         try Data("b".utf8).write(to: URL(fileURLWithPath: other))
-        #expect(Git.hasUncommittedChanges([mine], in: repository) == false)
+        #expect(Git.uncommittedFileCount([mine], in: repository) == 0)
 
         // Neither does a file outside the repository, or no file at all.
-        #expect(Git.hasUncommittedChanges(["/elsewhere/x.swift"], in: repository) == false)
-        #expect(Git.hasUncommittedChanges([], in: repository) == false)
+        #expect(Git.uncommittedFileCount(["/elsewhere/x.swift"], in: repository) == 0)
+        #expect(Git.uncommittedFileCount([], in: repository) == 0)
 
         try Data("c".utf8).write(to: URL(fileURLWithPath: mine))
-        #expect(Git.hasUncommittedChanges([mine], in: repository) == true)
+        #expect(Git.uncommittedFileCount([mine], in: repository) == 1)
+
+        // Each pending file counts once.
+        try Data("d".utf8).write(to: URL(fileURLWithPath: other))
+        #expect(Git.uncommittedFileCount([mine, other, mine], in: repository) == 2)
     }
 }

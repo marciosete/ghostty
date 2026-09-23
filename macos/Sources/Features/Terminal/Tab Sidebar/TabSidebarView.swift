@@ -345,6 +345,16 @@ private struct TabSidebarTabRow: View {
 
             Spacer(minLength: 0)
 
+            if let badge = tab.claudeCodeState?.badge {
+                Text("\(badge)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit()
+                    .padding(.horizontal, 5)
+                    .frame(minWidth: 16, minHeight: 16)
+                    .background(Capsule().fill(foreground.opacity(0.18)))
+                    .help(tab.claudeCodeState?.badgeHelp ?? "")
+            }
+
             if isHovering && !isEditing {
                 Button {
                     if let window = tab.window { model.close(window) }

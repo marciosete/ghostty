@@ -52,6 +52,47 @@ enum ClaudeCodeLight: CaseIterable {
     }
 }
 
+/// What an `auto` tab shows of the Claude Code sessions in its terminals: its color, and
+/// while it is yellow, how many files are waiting to be committed.
+struct ClaudeCodeTabState: Equatable {
+    let light: ClaudeCodeLight
+
+    /// Files the sessions edited that have changes not committed. Only counted once a
+    /// session stops working.
+    let pendingFiles: Int
+
+    /// Files the sessions edited that are in a git repository.
+    let editedFiles: Int
+
+    init(light: ClaudeCodeLight, pendingFiles: Int = 0, editedFiles: Int = 0) {
+        self.light = light
+        self.pendingFiles = pendingFiles
+        self.editedFiles = editedFiles
+    }
+
+    /// The tab of several sessions shows the one that needs attention most, and the files
+    /// all of them have left to commit.
+    static func combined(_ states: [ClaudeCodeTabState]) -> ClaudeCodeTabState? {
+        guard let light = ClaudeCodeLight.mostUrgent(states.map(\.light)) else { return nil }
+        return ClaudeCodeTabState(
+            light: light,
+            pendingFiles: states.reduce(0) { $0 + $1.pendingFiles },
+            editedFiles: states.reduce(0) { $0 + $1.editedFiles })
+    }
+
+    /// The number shown on the tab: the files waiting to be committed, while it is yellow.
+    var badge: Int? {
+        light == .pending && pendingFiles > 0 ? pendingFiles : nil
+    }
+
+    /// Says what the badge counts.
+    var badgeHelp: String? {
+        guard let badge else { return nil }
+        let files = editedFiles == 1 ? "file" : "files"
+        return "\(badge) of \(editedFiles) edited \(files) not committed"
+    }
+}
+
 /// Follows a transcript to collect the files the session edited. Only what was added to
 /// the transcript since the last read is read.
 final class ClaudeCodeEditTracker {
@@ -152,8 +193,8 @@ final class ClaudeCodeLights {
     /// The foreground process of each terminal of each `auto` tab.
     private var pids: [ObjectIdentifier: [Int]] = [:]
 
-    /// The light of each watched session, by process.
-    private var lights: [Int: ClaudeCodeLight] = [:]
+    /// The state of each watched session, by process.
+    private var states: [Int: ClaudeCodeTabState] = [:]
 
     /// A watch on the registry entry of each session shown in an `auto` tab, by process.
     private var entryWatches: [Int: DispatchSourceFileSystemObject] = [:]
@@ -179,7 +220,7 @@ final class ClaudeCodeLights {
             windows[id] = WeakWindow(window: window)
         } else {
             windows[id] = nil
-            window.claudeCodeLight = nil
+            window.claudeCodeState = nil
         }
         rescan()
     }
@@ -212,7 +253,7 @@ final class ClaudeCodeLights {
     private func show() {
         for (id, entry) in windows {
             guard let window = entry.window else { continue }
-            window.claudeCodeLight = ClaudeCodeLight.mostUrgent((pids[id] ?? []).compactMap { lights[$0] })
+            window.claudeCodeState = ClaudeCodeTabState.combined((pids[id] ?? []).compactMap { states[$0] })
         }
     }
 
@@ -220,7 +261,7 @@ final class ClaudeCodeLights {
         entryWatches[pid]?.cancel()
         entryWatches[pid] = nil
         setIdleWatches([], for: pid)
-        lights[pid] = nil
+        states[pid] = nil
     }
 
     // MARK: Sessions
@@ -257,11 +298,11 @@ final class ClaudeCodeLights {
                     return
 
                 case .unreadable:
-                    self.lights[pid] = nil
+                    self.states[pid] = nil
                     self.setIdleWatches([], for: pid)
 
-                case .session(let light, let watchWhileIdle):
-                    self.lights[pid] = light
+                case .session(let state, let watchWhileIdle):
+                    self.states[pid] = state
                     self.setIdleWatches(watchWhileIdle, for: pid)
                 }
                 self.show()
@@ -335,8 +376,8 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
         /// written.
         case unreadable
 
-        /// The session's light, if it has one, and what to watch while it isn't working.
-        case session(ClaudeCodeLight?, watchWhileIdle: [URL])
+        /// The session's state, if it has one, and what to watch while it isn't working.
+        case session(ClaudeCodeTabState?, watchWhileIdle: [URL])
     }
 
     /// Per session: its transcript, once found, and the files it edited.
@@ -353,14 +394,14 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
 
         // What the session changed only matters once it stops working.
         guard status == "idle" else {
-            return .session(ClaudeCodeLight(status: status, pending: false), watchWhileIdle: [])
+            return .session(Self.state(status: status), watchWhileIdle: [])
         }
 
         if transcripts[session.id] == nil, let url = session.transcript {
             transcripts[session.id] = (url, ClaudeCodeEditTracker())
         }
         guard let transcript = transcripts[session.id] else {
-            return .session(ClaudeCodeLight(status: status, pending: false), watchWhileIdle: [])
+            return .session(Self.state(status: status), watchWhileIdle: [])
         }
         transcript.edits.update(from: transcript.url)
 
@@ -371,12 +412,18 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
             byRepository[repository, default: []].append(resolved)
         }
 
-        // A file whose status can't be read counts as pending, so it is never shown as done.
-        let pending = byRepository.contains { repository, files in
-            Git.hasUncommittedChanges(files, in: repository) ?? true
+        // Files whose status can't be read count as pending, so they're never shown as done.
+        let pending = byRepository.reduce(0) { count, entry in
+            count + (Git.uncommittedFileCount(entry.value, in: entry.key) ?? entry.value.count)
         }
+        let edited = byRepository.values.reduce(0) { $0 + $1.count }
         let watch = [transcript.url] + byRepository.keys.map(\.gitDir)
-        return .session(ClaudeCodeLight(status: status, pending: pending), watchWhileIdle: watch)
+        return .session(Self.state(status: status, pendingFiles: pending, editedFiles: edited), watchWhileIdle: watch)
+    }
+
+    private static func state(status: String, pendingFiles: Int = 0, editedFiles: Int = 0) -> ClaudeCodeTabState? {
+        guard let light = ClaudeCodeLight(status: status, pending: pendingFiles > 0) else { return nil }
+        return ClaudeCodeTabState(light: light, pendingFiles: pendingFiles, editedFiles: editedFiles)
     }
 
     /// The repository containing `file`, looked up from its nearest existing directory,

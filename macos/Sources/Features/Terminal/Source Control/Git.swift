@@ -179,23 +179,37 @@ enum Git {
         return status
     }
 
-    /// Whether any of `files` (absolute paths inside `repository`) has changes that aren't
+    /// How many of `files` (absolute paths inside `repository`) have changes that aren't
     /// committed: modified, staged, added or deleted. Returns nil if git fails.
-    static func hasUncommittedChanges(_ files: [String], in repository: Repository) -> Bool? {
-        guard !files.isEmpty else { return false }
+    static func uncommittedFileCount(_ files: [String], in repository: Repository) -> Int? {
         let root = repository.root.path + "/"
         let pathspecs = files.compactMap { file -> String? in
             guard file.hasPrefix(root) else { return nil }
             // Literal, so a name with glob characters only matches itself.
             return ":(literal)" + file.dropFirst(root.count)
         }
-        guard !pathspecs.isEmpty else { return false }
+        guard !pathspecs.isEmpty else { return 0 }
 
         guard let output = run(
             ["status", "--porcelain", "-z", "--untracked-files=all", "--"] + pathspecs,
             in: repository.root
         ) else { return nil }
-        return !output.isEmpty
+        return changedPaths(porcelain: output).count
+    }
+
+    /// The paths in `git status --porcelain -z` output. A rename or copy is followed by the
+    /// path it came from, which isn't counted again.
+    static func changedPaths(porcelain output: String) -> Set<String> {
+        var paths: Set<String> = []
+        var fields = output.split(separator: "\0", omittingEmptySubsequences: true).makeIterator()
+        while let field = fields.next() {
+            guard field.count > 3 else { continue }
+            paths.insert(String(field.dropFirst(3)))
+            if field.first == "R" || field.first == "C" {
+                _ = fields.next()
+            }
+        }
+        return paths
     }
 
     /// Runs git and returns its output, or nil if it fails.

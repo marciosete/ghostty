@@ -27,6 +27,9 @@ final class TabSidebarModel: ObservableObject {
 
         /// The color assigned to the tab, which the color menu shows as selected.
         let assignedColor: TerminalTabColor
+
+        /// For an `auto` tab, what its Claude Code sessions are doing.
+        let claudeCodeState: ClaudeCodeTabState?
         let keyEquivalent: String?
         let isSelected: Bool
         let isZoomed: Bool
@@ -38,6 +41,7 @@ final class TabSidebarModel: ObservableObject {
                 lhs.title == rhs.title &&
                 lhs.color == rhs.color &&
                 lhs.assignedColor == rhs.assignedColor &&
+                lhs.claudeCodeState == rhs.claudeCodeState &&
                 lhs.keyEquivalent == rhs.keyEquivalent &&
                 lhs.isSelected == rhs.isSelected &&
                 lhs.isZoomed == rhs.isZoomed &&
@@ -162,6 +166,7 @@ final class TabSidebarModel: ObservableObject {
                 title: window.title,
                 color: window.shownTabColor,
                 assignedColor: window.tabColor,
+                claudeCodeState: window.claudeCodeState,
                 keyEquivalent: window.keyEquivalent.flatMap { $0.isEmpty ? nil : $0 },
                 isSelected: window === selected,
                 isZoomed: window.surfaceIsZoomed,
