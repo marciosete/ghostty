@@ -163,7 +163,7 @@ final class TabSidebarModel: ObservableObject {
                 id: ObjectIdentifier(window),
                 window: window,
                 index: index,
-                title: window.title,
+                title: window.sessionTitle ?? window.title,
                 color: window.shownTabColor,
                 assignedColor: window.tabColor,
                 claudeCodeState: window.claudeCodeState,
@@ -290,7 +290,7 @@ final class TabSidebarModel: ObservableObject {
 
     func beginRename(_ window: TerminalWindow) {
         commitEditing()
-        editingDraft = window.terminalController?.titleOverride ?? window.title
+        editingDraft = window.terminalController?.titleOverride ?? window.sessionTitle ?? window.title
         editingTabID = ObjectIdentifier(window)
     }
 

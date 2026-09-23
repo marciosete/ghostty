@@ -49,7 +49,7 @@ final class ScriptWindow: NSObject {
     @objc(title)
     var title: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
-        return selectedController?.window?.title ?? ""
+        return selectedController?.sessionTitle ?? ""
     }
 
     /// Exposed as the AppleScript `tabs` element.

@@ -95,6 +95,7 @@ class TerminalWindow: NSWindow {
         didSet {
             guard userTabGroupID != oldValue else { return }
             invalidateRestorableState()
+            applySessionTitle()
             postTabSidebarItemDidChange()
         }
     }
@@ -132,6 +133,10 @@ class TerminalWindow: NSWindow {
 
         // A new tab starts out `auto`, which `tabColor`'s didSet doesn't see.
         ClaudeCodeLights.shared.follow(self)
+
+        // The titlebar shows the group's name, so it follows the group being renamed.
+        groupNamesCancellable = UserTabGroupStore.shared.$groups
+            .sink { [weak self] groups in self?.applySessionTitle(groups: groups) }
 
         // This is fragile, but there doesn't seem to be an official API for customizing
         // native tab bar menus.
@@ -459,10 +464,30 @@ class TerminalWindow: NSWindow {
 
     // MARK: Title Text
 
+    /// The session's title, which its tab and the sidebar show. The window's title, which
+    /// the titlebar shows, puts the name of the session's group in front of it.
+    var sessionTitle: String? {
+        didSet { applySessionTitle() }
+    }
+
+    private var groupNamesCancellable: AnyCancellable?
+
+    /// Sets the window's title to the session's title, after its group's name if it's in
+    /// a group. `groups` is passed while the store is about to change to it.
+    private func applySessionTitle(groups: [UUID: UserTabGroup] = UserTabGroupStore.shared.groups) {
+        guard let sessionTitle else { return }
+        if let groupName = userTabGroupID.flatMap({ groups[$0]?.name }), !groupName.isEmpty {
+            title = "\(groupName) › \(sessionTitle)"
+        } else {
+            title = sessionTitle
+        }
+    }
+
     override var title: String {
         didSet {
             // Whenever we change the window title we must also update our
             // tab title if we're using custom fonts.
+            tab.title = sessionTitle ?? title
             tab.attributedTitle = attributedTitle
             guard title != oldValue else { return }
 
@@ -504,7 +529,7 @@ class TerminalWindow: NSWindow {
             .font: titlebarFont,
             .foregroundColor: isKeyWindow ? NSColor.labelColor : NSColor.secondaryLabelColor,
         ]
-        return NSAttributedString(string: title, attributes: attributes)
+        return NSAttributedString(string: sessionTitle ?? title, attributes: attributes)
     }
 
     var titlebarContainer: NSView? {
@@ -971,7 +996,7 @@ extension TerminalWindow: TabTitleEditorDelegate {
             return targetWindow.title
         }
 
-        return targetController.titleOverride ?? targetWindow.title
+        return targetController.titleOverride ?? targetController.sessionTitle
     }
 
     func tabTitleEditor(

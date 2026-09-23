@@ -109,6 +109,14 @@ class BaseTerminalController: NSWindowController,
     /// The last computed title from the focused surface (without the override).
     private var lastComputedTitle: String = "👻"
 
+    /// The session's title: the user's override, or the focused surface's title. A
+    /// terminal window's title adds its group in front of it, so tabs, the sidebar and
+    /// scripts show this instead.
+    var sessionTitle: String {
+        guard let titleOverride else { return lastComputedTitle }
+        return computeTitle(title: titleOverride, bell: focusedSurface?.bell ?? false)
+    }
+
     /// The time that undo/redo operations that contain running ptys are valid for.
     var undoExpiration: Duration {
         ghostty.config.undoTimeout
@@ -433,7 +441,7 @@ class BaseTerminalController: NSWindowController,
         alert.alertStyle = .informational
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
-        textField.stringValue = titleOverride ?? window.title
+        textField.stringValue = titleOverride ?? sessionTitle
         alert.accessoryView = textField
 
         alert.addButton(withTitle: "OK")
@@ -916,14 +924,11 @@ class BaseTerminalController: NSWindowController,
     private func applyTitleToWindow() {
         guard let window else { return }
 
-        if let titleOverride {
-            window.title = computeTitle(
-                title: titleOverride,
-                bell: focusedSurface?.bell ?? false)
-            return
+        if let terminalWindow = window as? TerminalWindow {
+            terminalWindow.sessionTitle = sessionTitle
+        } else {
+            window.title = sessionTitle
         }
-
-        window.title = lastComputedTitle
     }
 
     func pwdDidChange(to: URL?) {

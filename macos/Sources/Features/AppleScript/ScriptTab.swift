@@ -44,7 +44,7 @@ final class ScriptTab: NSObject {
     @objc(title)
     var title: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
-        return controller?.window?.title ?? ""
+        return controller?.sessionTitle ?? ""
     }
 
     /// Exposed as the AppleScript `index` property.
