@@ -288,20 +288,29 @@ final class TabSidebarModel: ObservableObject {
 
     /// Opens a new tab. With a group, the tab is added to the end of that group;
     /// otherwise it is added to the end of the tab list without a group. The new tab
-    /// inherits the working directory of this window's focused terminal.
+    /// inherits the working directory of a terminal in that group, so it opens in the
+    /// group's project even when the selected tab belongs to another group. Without a
+    /// group, it inherits from this window's focused terminal.
     func newTab(inGroup groupID: UUID? = nil) {
         guard let hostWindow,
               let hostController = hostWindow.terminalController else { return }
 
         let anchor: NSWindow
+        var source: TerminalWindow = hostWindow
         if let groupID, let last = members(of: groupID).last {
             anchor = last
+            if let selected = hostWindow.tabGroup?.selectedWindow as? TerminalWindow,
+               selected.userTabGroupID == groupID {
+                source = selected
+            } else {
+                source = last
+            }
         } else {
             anchor = tabWindows.last ?? hostWindow
         }
 
         var baseConfig: Ghostty.SurfaceConfiguration?
-        if let surface = hostController.focusedSurface?.surface {
+        if let surface = source.terminalController?.focusedSurface?.surface {
             baseConfig = .init(from: ghostty_surface_inherited_config(surface, GHOSTTY_SURFACE_CONTEXT_TAB))
         }
 
