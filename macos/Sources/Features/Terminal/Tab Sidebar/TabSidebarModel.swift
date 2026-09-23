@@ -21,7 +21,12 @@ final class TabSidebarModel: ObservableObject {
         weak var window: TerminalWindow?
         let index: Int
         let title: String
+
+        /// The color the tab is shown in (see `TerminalWindow.shownTabColor`).
         let color: TerminalTabColor
+
+        /// The color assigned to the tab, which the color menu shows as selected.
+        let assignedColor: TerminalTabColor
         let keyEquivalent: String?
         let isSelected: Bool
         let isZoomed: Bool
@@ -32,6 +37,7 @@ final class TabSidebarModel: ObservableObject {
                 lhs.index == rhs.index &&
                 lhs.title == rhs.title &&
                 lhs.color == rhs.color &&
+                lhs.assignedColor == rhs.assignedColor &&
                 lhs.keyEquivalent == rhs.keyEquivalent &&
                 lhs.isSelected == rhs.isSelected &&
                 lhs.isZoomed == rhs.isZoomed &&
@@ -154,7 +160,8 @@ final class TabSidebarModel: ObservableObject {
                 window: window,
                 index: index,
                 title: window.title,
-                color: window.tabColor,
+                color: window.shownTabColor,
+                assignedColor: window.tabColor,
                 keyEquivalent: window.keyEquivalent.flatMap { $0.isEmpty ? nil : $0 },
                 isSelected: window === selected,
                 isZoomed: window.surfaceIsZoomed,

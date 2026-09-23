@@ -114,9 +114,11 @@ final class TerminalRestorableState: TerminalRestorable {
     func apply(to c: TerminalController) {
         guard let window = c.window else { return }
 
-        // Restore our tab color and avoid unnecessary `invalidateRestorableState` calls
+        // Restore our tab color and avoid unnecessary `invalidateRestorableState` calls.
+        // A traffic-light color can no longer be picked by hand, so a tab saved with one
+        // was used as a light and follows its session now.
         if let tabColor {
-            (window as? TerminalWindow)?.tabColor = tabColor
+            (window as? TerminalWindow)?.tabColor = tabColor.isTrafficLight ? .auto : tabColor
         }
 
         // Restore the tab title override

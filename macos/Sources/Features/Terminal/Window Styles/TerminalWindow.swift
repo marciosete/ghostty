@@ -27,7 +27,7 @@ class TerminalWindow: NSWindow {
 
     /// Visual indicator that mirrors the selected tab color.
     private lazy var tabColorIndicator: NSHostingView<TabColorIndicatorView> = {
-        let view = NSHostingView(rootView: TabColorIndicatorView(tabColor: tabColor))
+        let view = NSHostingView(rootView: TabColorIndicatorView(tabColor: shownTabColor))
         view.translatesAutoresizingMaskIntoConstraints = false
         return view
     }()
@@ -64,10 +64,30 @@ class TerminalWindow: NSWindow {
     var tabColor: TerminalTabColor = .none {
         didSet {
             guard tabColor != oldValue else { return }
-            tabColorIndicator.rootView = TabColorIndicatorView(tabColor: tabColor)
             invalidateRestorableState()
-            postTabSidebarItemDidChange()
+            ClaudeCodeLights.shared.follow(self)
+            shownTabColorDidChange()
         }
+    }
+
+    /// What the Claude Code session in this tab is doing, while the tab's color is `auto`.
+    var claudeCodeLight: ClaudeCodeLight? {
+        didSet {
+            guard claudeCodeLight != oldValue else { return }
+            shownTabColorDidChange()
+        }
+    }
+
+    /// The color the tab is shown in: the one assigned to it, or for `auto`, the color of
+    /// what its Claude Code session is doing.
+    var shownTabColor: TerminalTabColor {
+        guard tabColor == .auto else { return tabColor }
+        return claudeCodeLight?.tabColor ?? .none
+    }
+
+    private func shownTabColorDidChange() {
+        tabColorIndicator.rootView = TabColorIndicatorView(tabColor: shownTabColor)
+        postTabSidebarItemDidChange()
     }
 
     /// The user tab group (shown in the tab sidebar) that this tab belongs to.
@@ -185,7 +205,7 @@ class TerminalWindow: NSWindow {
         // Setup the accessory view for tabs that shows our keyboard shortcuts,
         // zoomed state, etc. Note I tried to use SwiftUI here but ran into issues
         // where buttons were not clickable on macOS 15.
-        tabColorIndicator.rootView = TabColorIndicatorView(tabColor: tabColor)
+        tabColorIndicator.rootView = TabColorIndicatorView(tabColor: shownTabColor)
 
         let stackView = NSStackView()
         stackView.orientation = .horizontal

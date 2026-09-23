@@ -291,7 +291,7 @@ private struct TabSidebarGroupHeader: View {
     private var contextMenu: some View {
         Button("New Tab in Group") { model.newTab(inGroup: group.id) }
         Button("Rename Group…") { model.beginRename(group: group.id) }
-        TabSidebarColorMenu(title: "Group Color", selected: group.color) { color in
+        TabSidebarColorMenu(title: "Group Color", choices: TerminalTabColor.groupChoices, selected: group.color) { color in
             model.setColor(color, forGroup: group.id)
         }
         Button(group.isCollapsed ? "Expand Group" : "Collapse Group") {
@@ -441,7 +441,7 @@ private struct TabSidebarTabRow: View {
     private var contextMenu: some View {
         if let window = tab.window {
             Button("Rename Tab…") { model.beginRename(window) }
-            TabSidebarColorMenu(title: "Tab Color", selected: tab.color) { color in
+            TabSidebarColorMenu(title: "Tab Color", choices: TerminalTabColor.tabChoices, selected: tab.assignedColor) { color in
                 model.setColor(color, for: window)
             }
 
@@ -484,12 +484,13 @@ private enum TabSidebarStyle {
 /// A submenu that picks a tab color, showing a swatch for each color.
 private struct TabSidebarColorMenu: View {
     let title: String
+    let choices: [TerminalTabColor]
     let selected: TerminalTabColor
     let onSelect: (TerminalTabColor) -> Void
 
     var body: some View {
         Menu(title) {
-            ForEach(TerminalTabColor.allCases, id: \.self) { color in
+            ForEach(choices, id: \.self) { color in
                 Button {
                     onSelect(color)
                 } label: {

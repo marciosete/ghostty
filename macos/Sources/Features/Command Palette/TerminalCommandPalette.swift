@@ -146,7 +146,7 @@ struct TerminalCommandPaletteView: View {
         TerminalController.all.flatMap { controller -> [CommandOption] in
             guard let window = controller.window else { return [] }
 
-            let color = (window as? TerminalWindow)?.tabColor
+            let color = (window as? TerminalWindow)?.shownTabColor
             let displayColor = color != TerminalTabColor.none ? color : nil
 
             return controller.surfaceTree.map { surface in
