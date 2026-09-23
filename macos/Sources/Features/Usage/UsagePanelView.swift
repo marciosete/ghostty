@@ -12,6 +12,7 @@ struct UsagePanelView: View {
     let topInset: CGFloat
 
     @State private var resizeStartWidth: CGFloat?
+    @State private var isEditingCustomRange = false
 
     private var isWide: Bool { settings.width >= 720 }
 
@@ -36,7 +37,7 @@ struct UsagePanelView: View {
                     Text("USAGE")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    Text(UsageFormat.window(model.summary?.window ?? .last(days: settings.windowDays)))
+                    Text(UsageFormat.window(model.summary?.window ?? .last(settings.range)))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -46,33 +47,90 @@ struct UsagePanelView: View {
                 refreshButton
             }
 
-            HStack(spacing: 8) {
-                Picker("Metric", selection: $settings.metric) {
-                    Text("Cost").tag(UsageMetric.cost)
-                    Text("Tokens").tag(UsageMetric.tokens)
+            // A narrow panel can't fit the range controls beside the metric.
+            if isWide {
+                HStack(spacing: 8) {
+                    metricPicker
+                    Spacer(minLength: 0)
+                    rangeControls
                 }
-                .fixedSize()
-
-                Spacer(minLength: 0)
-
-                Picker("Period", selection: $settings.windowDays) {
-                    ForEach(UsageSettings.windowOptions, id: \.self) { days in
-                        Text(windowLabel(days)).tag(days)
-                    }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    metricPicker
+                    rangeControls
                 }
-                .fixedSize()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(.small)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 
-    private func windowLabel(_ days: Int) -> String {
-        if days == 1 { return isWide ? "Past 24h" : "24h" }
-        return isWide ? "\(days) days" : "\(days)d"
+    private var metricPicker: some View {
+        Picker("Metric", selection: $settings.metric) {
+            Text("Cost").tag(UsageMetric.cost)
+            Text("Tokens").tag(UsageMetric.tokens)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .fixedSize()
+    }
+
+    private var rangeControls: some View {
+        HStack(spacing: 6) {
+            Picker("Period", selection: presetSelection) {
+                ForEach(UsageRange.presets, id: \.self) { range in
+                    Text(presetLabel(range)).tag(Optional(range))
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+
+            customRangeButton
+        }
+        .controlSize(.small)
+    }
+
+    /// The preset segment of the current range, or none when the range is custom.
+    private var presetSelection: Binding<UsageRange?> {
+        Binding(
+            get: { UsageRange.presets.contains(settings.range) ? settings.range : nil },
+            set: { range in
+                if let range { settings.range = range }
+            })
+    }
+
+    private func presetLabel(_ range: UsageRange) -> String {
+        guard isWide else { return range.shortLabel }
+        return range == UsageRange(24, .hour) ? "Past 24h" : range.label.capitalized
+    }
+
+    private var isCustomRange: Bool { !UsageRange.presets.contains(settings.range) }
+
+    private var customRangeButton: some View {
+        Button {
+            isEditingCustomRange.toggle()
+        } label: {
+            // Accent text marks a custom range as showing, as a filled segment marks a
+            // preset.
+            if isCustomRange {
+                Text("Last \(settings.range.label)")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.accentColor)
+            } else {
+                Text("Custom…")
+            }
+        }
+        .buttonStyle(.bordered)
+        .fixedSize()
+        .help("Show the last N minutes, hours, days, weeks or months")
+        .popover(isPresented: $isEditingCustomRange, arrowEdge: .bottom) {
+            UsageCustomRangeEditor(initial: settings.range) { range in
+                settings.range = range
+                isEditingCustomRange = false
+            }
+        }
     }
 
     private var refreshButton: some View {
@@ -303,7 +361,7 @@ struct UsagePanelView: View {
 
     private func chart(_ summary: UsageSummary) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(summary.window.hourly == nil ? "Daily" : "Hourly") \(settings.metric == .cost ? "cost" : "processed tokens")")
+            Text("\(settings.metric == .cost ? "Cost" : "Processed tokens") per \(UsageFormat.periodName(summary.window).lowercased())")
                 .font(.system(size: 13, weight: .medium))
             UsageChart(summary: summary, metric: settings.metric)
                 .frame(height: isWide ? 240 : 190)
@@ -346,7 +404,7 @@ struct UsagePanelView: View {
                 Spacer()
                 Picker("Breakdown", selection: $model.breakdown) {
                     Text("Model").tag(UsagePanelModel.Breakdown.model)
-                    Text(summary.window.hourly == nil ? "Day" : "Hour").tag(UsagePanelModel.Breakdown.period)
+                    Text(UsageFormat.periodName(summary.window)).tag(UsagePanelModel.Breakdown.period)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -411,12 +469,12 @@ struct UsagePanelView: View {
 
     private func periodTable(_ summary: UsageSummary) -> some View {
         let providers = summary.activeProviders
-        // Newest first: the window can run 90 periods, and the recent end is what matters.
+        // Newest first: the window can run hundreds of periods, and the recent end is what matters.
         let periods = summary.periods.filter(\.hasUsage).reversed()
 
         return VStack(spacing: 0) {
             UsageTableRow(isHeader: true) {
-                Text(summary.window.hourly == nil ? "Day" : "Hour").frame(maxWidth: .infinity, alignment: .leading)
+                Text(UsageFormat.periodName(summary.window)).frame(maxWidth: .infinity, alignment: .leading)
                 ForEach(providers) { provider in
                     Text(provider.label)
                         .lineLimit(1)
@@ -559,7 +617,7 @@ private struct UsageTableRow<Content: View>: View {
 
 // MARK: - Chart
 
-/// The daily (or hourly) cost or tokens of each provider, as overlaid areas rather than
+/// The daily (or per bucket) cost or tokens of each provider, as overlaid areas rather than
 /// stacked ones so each is measured from zero. Hovering shows a period's values.
 private struct UsageChart: View {
     let summary: UsageSummary
@@ -757,5 +815,56 @@ struct UsageProviderMark: View {
             .renderingMode(.template)
             .aspectRatio(contentMode: .fit)
             .foregroundStyle(provider == .claude ? provider.color : .primary)
+    }
+}
+
+/// Picks a custom range as "Last [amount] [unit]".
+private struct UsageCustomRangeEditor: View {
+    let onApply: (UsageRange) -> Void
+
+    @State private var amount: Int
+    @State private var unit: UsageRange.Unit
+
+    init(initial: UsageRange, onApply: @escaping (UsageRange) -> Void) {
+        self.onApply = onApply
+        _amount = State(initialValue: initial.amount)
+        _unit = State(initialValue: initial.unit)
+    }
+
+    private var range: UsageRange { UsageRange(amount, unit) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("Last")
+                TextField("Amount", value: $amount, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 64)
+                    .onSubmit(apply)
+                Picker("Unit", selection: $unit) {
+                    ForEach(UsageRange.Unit.allCases, id: \.self) { unit in
+                        Text(amount == 1 ? unit.rawValue : unit.rawValue + "s").tag(unit)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+            }
+
+            HStack {
+                Text(amount > unit.maxAmount ? "Up to \(unit.maxAmount) \(unit.rawValue)s" : " ")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Apply", action: apply)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(12)
+        .frame(width: 260)
+    }
+
+    private func apply() {
+        onApply(range)
     }
 }

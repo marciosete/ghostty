@@ -194,13 +194,15 @@ struct UsageAggregationTests {
             dedupeKey: key)
     }
 
-    private func window(_ timeZone: String = "UTC", hourly: Bool = false) -> UsageWindow {
+    private func window(_ timeZone: String = "UTC", timed: Bool = false) -> UsageWindow {
         UsageWindow(
-            days: hourly ? 1 : 31,
+            range: timed ? UsageRange(24, .hour) : UsageRange(31, .day),
             sinceDay: "2026-08-01",
             untilDay: "2026-08-31",
             timeZone: TimeZone(identifier: timeZone)!,
-            hourly: hourly ? .init(sinceMs: ms("2026-08-06T04:37:00Z"), untilMs: ms("2026-08-07T04:37:00Z")) : nil)
+            timed: timed
+                ? .init(sinceMs: ms("2026-08-06T04:37:00Z"), untilMs: ms("2026-08-07T04:37:00Z"), bucketMs: UsageWindow.hourMs)
+                : nil)
     }
 
     private func aggregate(_ records: [UsageRecord], _ window: UsageWindow) -> (UsageAggregator, [UsageBucket]) {
@@ -223,9 +225,9 @@ struct UsageAggregationTests {
     @Test func anchorsHourlyBucketsToTheWindowStart() {
         let (_, buckets) = aggregate(
             [record(at: "2026-08-07T02:40:13.944Z"), record(at: "2026-08-07T03:40:13.944Z")],
-            window("America/Los_Angeles", hourly: true))
+            window("America/Los_Angeles", timed: true))
         #expect(buckets.map(\.day) == ["2026-08-06", "2026-08-06"])
-        #expect(buckets.map(\.hourStartMs) == [ms("2026-08-07T02:37:00Z"), ms("2026-08-07T03:37:00Z")])
+        #expect(buckets.map(\.startMs) == [ms("2026-08-07T02:37:00Z"), ms("2026-08-07T03:37:00Z")])
     }
 
     @Test func includesTheStartAndExcludesTheEndOfAnHourlyWindow() {
@@ -234,9 +236,9 @@ struct UsageAggregationTests {
             record(at: "2026-08-06T04:37:00.000Z"),
             record(at: "2026-08-07T04:36:59.999Z"),
             record(at: "2026-08-07T04:37:00.000Z"),
-        ], window(hourly: true))
+        ], window(timed: true))
         #expect(aggregator.outOfWindow == 2)
-        #expect(buckets.map(\.hourStartMs) == [ms("2026-08-06T04:37:00Z"), ms("2026-08-07T03:37:00Z")])
+        #expect(buckets.map(\.startMs) == [ms("2026-08-06T04:37:00Z"), ms("2026-08-07T03:37:00Z")])
     }
 
     @Test func pricesAgainstTheRateTable() {
@@ -271,7 +273,7 @@ struct UsageWindowTests {
         let timeZone = TimeZone(identifier: "Australia/Sydney")!
         // 10:02 on Sep 22 in Sydney.
         let now = Date(timeIntervalSince1970: Double(ms("2026-09-22T00:02:04Z")) / 1000)
-        let window = UsageWindow.last(days: 30, now: now, timeZone: timeZone)
+        let window = UsageWindow.last(UsageRange(30, .day), now: now, timeZone: timeZone)
         #expect(window.sinceDay == "2026-08-24")
         #expect(window.untilDay == "2026-09-22")
         #expect(window.allDays.count == 30)
@@ -280,9 +282,70 @@ struct UsageWindowTests {
 
     @Test func pastDayIsHourly() {
         let now = Date(timeIntervalSince1970: Double(ms("2026-09-22T00:02:34Z")) / 1000)
-        let window = UsageWindow.last(days: 1, now: now, timeZone: TimeZone(identifier: "UTC")!)
-        #expect(window.hourly?.untilMs == ms("2026-09-22T00:02:00Z"))
-        #expect(window.allHourStarts.count == 24)
+        let window = UsageWindow.last(UsageRange(24, .hour), now: now, timeZone: TimeZone(identifier: "UTC")!)
+        #expect(window.timed?.untilMs == ms("2026-09-22T00:02:00Z"))
+        #expect(window.allBucketStarts.count == 24)
+        #expect(UsageFormat.periodName(window) == "Hour")
+    }
+
+    @Test func minutesUseShortBuckets() {
+        let utc = TimeZone(identifier: "UTC")!
+        let now = Date(timeIntervalSince1970: Double(ms("2026-09-22T14:45:34Z")) / 1000)
+
+        let halfHour = UsageWindow.last(UsageRange(30, .minute), now: now, timeZone: utc)
+        #expect(halfHour.timed?.sinceMs == ms("2026-09-22T14:15:00Z"))
+        #expect(halfHour.timed?.bucketMs == UsageWindow.minuteMs)
+        #expect(halfHour.allBucketStarts.count == 30)
+        #expect(UsageFormat.window(halfHour) == "2:15 PM to 2:45 PM")
+        #expect(UsageFormat.periodName(halfHour) == "1 min")
+
+        let sixHours = UsageWindow.last(UsageRange(6, .hour), now: now, timeZone: utc)
+        #expect(sixHours.timed?.bucketMs == 15 * UsageWindow.minuteMs)
+        #expect(sixHours.allBucketStarts.count == 24)
+    }
+
+    @Test func longRollingWindowsKeepTheChartSmall() {
+        let now = Date(timeIntervalSince1970: Double(ms("2026-09-22T14:45:34Z")) / 1000)
+        let window = UsageWindow.last(UsageRange(200, .hour), now: now, timeZone: TimeZone(identifier: "UTC")!)
+        #expect(window.timed?.bucketMs == 6 * UsageWindow.hourMs)
+        #expect(window.allBucketStarts.count == 34)
+        #expect(UsageFormat.periodName(window) == "6 hr")
+    }
+
+    @Test func weeksAndMonthsAreWholeDays() {
+        let utc = TimeZone(identifier: "UTC")!
+        let now = Date(timeIntervalSince1970: Double(ms("2026-03-31T09:00:00Z")) / 1000)
+
+        let twoWeeks = UsageWindow.last(UsageRange(2, .week), now: now, timeZone: utc)
+        #expect(twoWeeks.timed == nil)
+        #expect(twoWeeks.allDays.count == 14)
+        #expect(twoWeeks.sinceDay == "2026-03-18")
+
+        // A month back from Mar 31 is Feb 28, so the window starts the day after.
+        let month = UsageWindow.last(UsageRange(1, .month), now: now, timeZone: utc)
+        #expect(month.sinceDay == "2026-03-01")
+        #expect(month.untilDay == "2026-03-31")
+
+        let quarter = UsageWindow.last(UsageRange(3, .month), now: now, timeZone: utc)
+        #expect(quarter.sinceDay == "2026-01-01")
+
+        let today = UsageWindow.last(UsageRange(1, .day), now: now, timeZone: utc)
+        #expect(UsageFormat.window(today) == "Mar 31")
+    }
+
+    @Test func monthsBeforeCrossesYears() {
+        let index = UsageDay.index(of: "2026-02-15")!
+        #expect(UsageDay.string(fromIndex: UsageDay.index(monthsBefore: 3, dayIndex: index)) == "2025-11-15")
+        #expect(UsageDay.string(fromIndex: UsageDay.index(monthsBefore: 12, dayIndex: index)) == "2025-02-15")
+    }
+
+    @Test func rangesClampAndRoundTrip() {
+        #expect(UsageRange(0, .day).amount == 1)
+        #expect(UsageRange(40, .month).amount == 12)
+        #expect(UsageRange(storageValue: UsageRange(45, .minute).storageValue) == UsageRange(45, .minute))
+        #expect(UsageRange(storageValue: "7 fortnight") == nil)
+        #expect(UsageRange(1, .week).label == "1 week")
+        #expect(UsageRange(3, .month).shortLabel == "3mo")
     }
 
     @Test func dayIndexRoundTrips() {

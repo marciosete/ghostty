@@ -8,14 +8,14 @@ final class UsageSettings: ObservableObject {
     private static let visibleKey = "UsagePanelVisible"
     private static let widthKey = "UsagePanelWidth"
     private static let metricKey = "UsagePanelMetric"
-    private static let windowDaysKey = "UsagePanelWindowDays"
+    private static let rangeKey = "UsagePanelRange"
+
+    /// Where builds before custom ranges saved the window, in days. 1 was the past 24 hours.
+    private static let legacyWindowDaysKey = "UsagePanelWindowDays"
 
     static let minWidth: CGFloat = 320
     static let maxWidth: CGFloat = 960
     static let defaultWidth: CGFloat = 420
-
-    /// The windows the panel offers, in days. 1 is the rolling past 24 hours.
-    static let windowOptions = [1, 7, 30, 90]
 
     @Published var isVisible: Bool {
         didSet { UserDefaults.ghostty.set(isVisible, forKey: Self.visibleKey) }
@@ -29,8 +29,8 @@ final class UsageSettings: ObservableObject {
         didSet { UserDefaults.ghostty.set(metric.rawValue, forKey: Self.metricKey) }
     }
 
-    @Published var windowDays: Int {
-        didSet { UserDefaults.ghostty.set(windowDays, forKey: Self.windowDaysKey) }
+    @Published var range: UsageRange {
+        didSet { UserDefaults.ghostty.set(range.storageValue, forKey: Self.rangeKey) }
     }
 
     private init() {
@@ -42,8 +42,12 @@ final class UsageSettings: ObservableObject {
 
         metric = defaults.string(forKey: Self.metricKey).flatMap(UsageMetric.init(rawValue:)) ?? .cost
 
-        let storedDays = defaults.integer(forKey: Self.windowDaysKey)
-        windowDays = Self.windowOptions.contains(storedDays) ? storedDays : 30
+        if let stored = defaults.string(forKey: Self.rangeKey).flatMap(UsageRange.init(storageValue:)) {
+            range = stored
+        } else {
+            let legacyDays = defaults.integer(forKey: Self.legacyWindowDaysKey)
+            range = legacyDays == 1 ? UsageRange(24, .hour) : UsageRange(legacyDays > 0 ? legacyDays : 30, .day)
+        }
     }
 
     static func clampWidth(_ width: CGFloat) -> CGFloat {
@@ -110,10 +114,10 @@ final class UsagePanelModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        settings.$windowDays
+        settings.$range
             .dropFirst()
             .removeDuplicates()
-            .sink { [weak self] days in self?.refresh(days: days) }
+            .sink { [weak self] range in self?.refresh(range: range) }
             .store(in: &cancellables)
     }
 
@@ -148,11 +152,11 @@ final class UsagePanelModel: ObservableObject {
     }
 
     /// Scans the transcripts again. `refreshRates` also downloads the model prices again.
-    func refresh(days: Int? = nil, refreshRates: Bool = false) {
+    func refresh(range: UsageRange? = nil, refreshRates: Bool = false) {
         latestScan += 1
         let scan = latestScan
         isScanning = true
-        scanner.scan(.last(days: days ?? settings.windowDays), refreshRates: refreshRates) { [weak self] report in
+        scanner.scan(.last(range ?? settings.range), refreshRates: refreshRates) { [weak self] report in
             guard let self, scan == self.latestScan else { return }
             self.summary = UsageSummary(report)
             self.isScanning = false

@@ -28,15 +28,15 @@ struct UsageSummary {
         var isCostUnknown: Bool { records > 0 && unpricedRecords >= records }
     }
 
-    /// One day, or one hour of an hourly window.
+    /// One day, or one bucket of a rolling window.
     struct PeriodTotals: Identifiable {
         let day: String
-        let hourStartMs: Int?
+        let startMs: Int?
         var costUsd = 0.0
         var totalTokens = 0
         var byProvider: [UsageProvider: (costUsd: Double, totalTokens: Int)] = [:]
 
-        var id: String { hourStartMs.map(String.init) ?? day }
+        var id: String { startMs.map(String.init) ?? day }
         var hasUsage: Bool { !byProvider.isEmpty }
 
         func value(of provider: UsageProvider, _ metric: UsageMetric) -> Double {
@@ -65,7 +65,7 @@ struct UsageSummary {
     /// Sorted by cost, then tokens, highest first.
     let models: [ModelTotals]
 
-    /// Every day (or hour) of the window, oldest first, including those without usage.
+    /// Every day (or bucket) of the window, oldest first, including those without usage.
     let periods: [PeriodTotals]
 
     init(_ report: UsageReport) {
@@ -100,8 +100,8 @@ struct UsageSummary {
             model.unpricedRecords += bucket.unpricedRecords
             models[modelKey] = model
 
-            let periodKey = bucket.hourStartMs.map(String.init) ?? bucket.day
-            var period = periods[periodKey] ?? PeriodTotals(day: bucket.day, hourStartMs: bucket.hourStartMs)
+            let periodKey = bucket.startMs.map(String.init) ?? bucket.day
+            var period = periods[periodKey] ?? PeriodTotals(day: bucket.day, startMs: bucket.startMs)
             period.costUsd += bucket.costUsd
             period.totalTokens += tokens
             let providerTotals = period.byProvider[bucket.provider] ?? (0, 0)
@@ -138,15 +138,15 @@ struct UsageSummary {
                 lhs.costUsd != rhs.costUsd ? lhs.costUsd > rhs.costUsd : lhs.totalTokens > rhs.totalTokens
             }
 
-        if report.window.hourly != nil {
-            self.periods = report.window.allHourStarts.map { hourStartMs in
-                periods[String(hourStartMs)] ?? PeriodTotals(
-                    day: UsageDay.day(ofMs: hourStartMs, in: report.window.timeZone),
-                    hourStartMs: hourStartMs)
+        if report.window.timed != nil {
+            self.periods = report.window.allBucketStarts.map { startMs in
+                periods[String(startMs)] ?? PeriodTotals(
+                    day: UsageDay.day(ofMs: startMs, in: report.window.timeZone),
+                    startMs: startMs)
             }
         } else {
             self.periods = report.window.allDays.map { day in
-                periods[day] ?? PeriodTotals(day: day, hourStartMs: nil)
+                periods[day] ?? PeriodTotals(day: day, startMs: nil)
             }
         }
     }
@@ -248,6 +248,11 @@ enum UsageFormat {
         formatter("h a", timeZone).string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1000))
     }
 
+    /// The start of a bucket shorter than an hour, as `2:15 PM`.
+    static func time(_ milliseconds: Int, in timeZone: TimeZone) -> String {
+        formatter("h:mm a", timeZone).string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1000))
+    }
+
     /// `Aug 11, 2 PM`
     static func dateTime(_ milliseconds: Int, in timeZone: TimeZone) -> String {
         formatter("MMM d, h a", timeZone).string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1000))
@@ -261,26 +266,45 @@ enum UsageFormat {
         return formatter
     }
 
-    /// A period's label, as `Aug 24` or `2 PM`.
+    /// A period's label, as `Aug 24`, `2 PM`, `2:15 PM`, or `Aug 11, 2 PM` when a
+    /// rolling window spans more than two days.
     static func period(_ period: UsageSummary.PeriodTotals, in window: UsageWindow) -> String {
-        guard let hourStartMs = period.hourStartMs else { return day(period.day) }
-        return hour(hourStartMs, in: window.timeZone)
+        guard let startMs = period.startMs, let timed = window.timed else { return day(period.day) }
+        if timed.untilMs - timed.sinceMs > 2 * UsageWindow.dayMs { return dateTime(startMs, in: window.timeZone) }
+        return clock(startMs, in: window)
     }
 
     /// A period's label in the chart's hover card, as `Aug 24`, `2 PM today` or
-    /// `2 PM yesterday`.
+    /// `2:15 PM yesterday`.
     static func periodDetail(_ period: UsageSummary.PeriodTotals, in window: UsageWindow) -> String {
-        guard let hourStartMs = period.hourStartMs, let hourly = window.hourly else { return day(period.day) }
-        let today = UsageDay.day(ofMs: hourly.untilMs, in: window.timeZone)
+        guard let startMs = period.startMs, let timed = window.timed else { return day(period.day) }
+        let today = UsageDay.day(ofMs: timed.untilMs, in: window.timeZone)
         guard let daysAgo = UsageDay.index(of: today).flatMap({ todayIndex in
             UsageDay.index(of: period.day).map { todayIndex - $0 }
-        }) else { return dateTime(hourStartMs, in: window.timeZone) }
+        }) else { return dateTime(startMs, in: window.timeZone) }
 
         switch daysAgo {
-        case 0: return hour(hourStartMs, in: window.timeZone) + " today"
-        case 1: return hour(hourStartMs, in: window.timeZone) + " yesterday"
-        default: return dateTime(hourStartMs, in: window.timeZone)
+        case 0: return clock(startMs, in: window) + " today"
+        case 1: return clock(startMs, in: window) + " yesterday"
+        default: return dateTime(startMs, in: window.timeZone)
         }
+    }
+
+    /// A bucket's start as a time of day, with minutes only when buckets are shorter
+    /// than an hour.
+    private static func clock(_ startMs: Int, in window: UsageWindow) -> String {
+        let bucketMs = window.timed?.bucketMs ?? UsageWindow.hourMs
+        return bucketMs < UsageWindow.hourMs ? time(startMs, in: window.timeZone) : hour(startMs, in: window.timeZone)
+    }
+
+    /// What one period of the window is, for the chart's title and the breakdown: `Day`,
+    /// `Hour`, `5 min` or `3 hr`.
+    static func periodName(_ window: UsageWindow) -> String {
+        guard let timed = window.timed else { return "Day" }
+        let minutes = timed.bucketMs / UsageWindow.minuteMs
+        if minutes == 60 { return "Hour" }
+        if minutes == 24 * 60 { return "Day" }
+        return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) hr"
     }
 
     private static let resetFormatter: DateFormatter = {
@@ -304,11 +328,17 @@ enum UsageFormat {
         return "Resets " + resetFormatter.string(from: date)
     }
 
-    /// The window as `Aug 24 to Sep 22`, or `Sep 21, 10 PM to Sep 22, 10 PM`.
+    /// The window as `Aug 24 to Sep 22`, `Sep 21, 10:02 PM to Sep 22, 10:02 PM`, or
+    /// `2:15 PM to 2:45 PM` within a day.
     static func window(_ window: UsageWindow) -> String {
-        if let hourly = window.hourly {
-            return "\(dateTime(hourly.sinceMs, in: window.timeZone)) to \(dateTime(hourly.untilMs, in: window.timeZone))"
+        if let timed = window.timed {
+            let format = window.sinceDay == window.untilDay ? "h:mm a" : "MMM d, h:mm a"
+            let formatter = formatter(format, window.timeZone)
+            let since = formatter.string(from: Date(timeIntervalSince1970: Double(timed.sinceMs) / 1000))
+            let until = formatter.string(from: Date(timeIntervalSince1970: Double(timed.untilMs) / 1000))
+            return "\(since) to \(until)"
         }
+        if window.sinceDay == window.untilDay { return day(window.untilDay) }
         return "\(day(window.sinceDay)) to \(day(window.untilDay))"
     }
 

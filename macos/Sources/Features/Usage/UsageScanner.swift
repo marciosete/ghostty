@@ -51,7 +51,7 @@ final class UsageScanner {
     private static let ratesRefreshFloor: TimeInterval = 60
 
     /// The longest window the panel offers. Cached files older than this are dropped.
-    private static let retentionMs = 90 * UsageWindow.dayMs
+    private static let retentionMs = 366 * UsageWindow.dayMs
 
     private let queue = DispatchQueue(label: "com.mitchellh.ghostty.usage-scanner", qos: .userInitiated)
     private let storageDirectory: URL

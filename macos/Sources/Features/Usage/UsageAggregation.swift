@@ -1,10 +1,72 @@
 import Foundation
 
-/// The range of time a usage report covers, in calendar days of the viewer's time zone so
-/// they line up with the days the viewer experienced.
+/// A span of time the usage panel reports on, as "the last `amount` `unit`s".
+struct UsageRange: Hashable {
+    enum Unit: String, CaseIterable {
+        case minute
+        case hour
+        case day
+        case week
+        case month
+
+        /// The largest amount the panel accepts. Every unit tops out around a year, the
+        /// longest the scanner keeps the usage of deleted transcripts.
+        var maxAmount: Int {
+            switch self {
+            case .minute: return 7 * 24 * 60
+            case .hour: return 366 * 24
+            case .day: return 366
+            case .week: return 52
+            case .month: return 12
+            }
+        }
+    }
+
+    let amount: Int
+    let unit: Unit
+
+    init(_ amount: Int, _ unit: Unit) {
+        self.amount = min(max(amount, 1), unit.maxAmount)
+        self.unit = unit
+    }
+
+    /// The ranges the panel offers as one click choices.
+    static let presets = [UsageRange(24, .hour), UsageRange(7, .day), UsageRange(30, .day), UsageRange(90, .day)]
+
+    /// `24 hours`, `1 week`
+    var label: String {
+        "\(amount) \(unit.rawValue)\(amount == 1 ? "" : "s")"
+    }
+
+    /// `24h`, `7d`, `3mo`
+    var shortLabel: String {
+        let suffix: String
+        switch unit {
+        case .minute: suffix = "m"
+        case .hour: suffix = "h"
+        case .day: suffix = "d"
+        case .week: suffix = "w"
+        case .month: suffix = "mo"
+        }
+        return "\(amount)\(suffix)"
+    }
+
+    /// The form saved in user defaults, as `24 hour`.
+    var storageValue: String { "\(amount) \(unit.rawValue)" }
+
+    init?(storageValue: String) {
+        let parts = storageValue.split(separator: " ")
+        guard parts.count == 2, let amount = Int(parts[0]), amount > 0,
+              let unit = Unit(rawValue: String(parts[1])) else { return nil }
+        self.init(amount, unit)
+    }
+}
+
+/// The range of time a usage report covers. Minutes and hours are a rolling window
+/// reported in time buckets. Days, weeks and months are whole calendar days of the
+/// viewer's time zone, so they line up with the days the viewer experienced.
 struct UsageWindow: Equatable {
-    /// How many days the window spans. 1 is the rolling past 24 hours.
-    let days: Int
+    let range: UsageRange
 
     /// The first and last day of the window as `YYYY-MM-DD`, both included.
     let sinceDay: String
@@ -12,45 +74,63 @@ struct UsageWindow: Equatable {
 
     let timeZone: TimeZone
 
-    /// For the past 24 hours, the exact bounds of the window. It is reported by hour
-    /// rather than by day.
-    let hourly: HourRange?
+    /// For a rolling window, its exact bounds and the length of its buckets. It is
+    /// reported by bucket rather than by day.
+    let timed: TimeRange?
 
-    struct HourRange: Equatable {
+    struct TimeRange: Equatable {
         let sinceMs: Int
         let untilMs: Int
+        let bucketMs: Int
     }
 
+    static let minuteMs = 60_000
     static let hourMs = 3_600_000
     static let dayMs = 86_400_000
 
-    /// The window of the last `days` days, ending now.
-    static func last(days: Int, now: Date = Date(), timeZone: TimeZone = .current) -> UsageWindow {
+    /// The bucket lengths of a rolling window, shortest first. A window uses the
+    /// longest that still gives the chart `minBuckets` points, so the past 24 hours is
+    /// hourly and the past 6 hours is by quarter hour.
+    static let bucketLengthsMs = [1, 5, 15, 30, 60, 180, 360, 720, 1440].map { $0 * minuteMs }
+    static let minBuckets = 24
+
+    /// The window of `range`, ending now.
+    static func last(_ range: UsageRange, now: Date = Date(), timeZone: TimeZone = .current) -> UsageWindow {
         let nowMs = Int(now.timeIntervalSince1970 * 1000)
 
-        if days == 1 {
-            // Minute aligned bounds keep labels readable while still covering exactly 24
-            // hours. Fixed length hours stay correct across daylight saving changes.
-            let untilMs = nowMs / 60_000 * 60_000
-            let sinceMs = untilMs - 24 * hourMs
+        switch range.unit {
+        case .minute, .hour:
+            // Minute aligned bounds keep labels readable while still covering the exact
+            // span. Fixed length hours stay correct across daylight saving changes.
+            let spanMs = range.amount * (range.unit == .minute ? minuteMs : hourMs)
+            let untilMs = nowMs / minuteMs * minuteMs
+            let sinceMs = untilMs - spanMs
+            let bucketMs = bucketLengthsMs.last { spanMs / $0 >= minBuckets } ?? minuteMs
             return UsageWindow(
-                days: 1,
+                range: range,
                 sinceDay: UsageDay.day(ofMs: sinceMs, in: timeZone),
                 untilDay: UsageDay.day(ofMs: untilMs, in: timeZone),
                 timeZone: timeZone,
-                hourly: HourRange(sinceMs: sinceMs, untilMs: untilMs))
-        }
+                timed: TimeRange(sinceMs: sinceMs, untilMs: untilMs, bucketMs: bucketMs))
 
-        // Subtracting a fixed number of milliseconds lands on the wrong day around a
-        // daylight saving change, so the start is calendar arithmetic on the end day.
-        let untilDay = UsageDay.day(ofMs: nowMs, in: timeZone)
-        let untilIndex = UsageDay.index(of: untilDay) ?? nowMs / dayMs
-        return UsageWindow(
-            days: days,
-            sinceDay: UsageDay.string(fromIndex: untilIndex - (days - 1)),
-            untilDay: untilDay,
-            timeZone: timeZone,
-            hourly: nil)
+        case .day, .week, .month:
+            // Subtracting a fixed number of milliseconds lands on the wrong day around a
+            // daylight saving change, so the start is calendar arithmetic on the end day.
+            let untilDay = UsageDay.day(ofMs: nowMs, in: timeZone)
+            let untilIndex = UsageDay.index(of: untilDay) ?? nowMs / dayMs
+            let sinceIndex: Int
+            switch range.unit {
+            case .week: sinceIndex = untilIndex - (7 * range.amount - 1)
+            case .month: sinceIndex = UsageDay.index(monthsBefore: range.amount, dayIndex: untilIndex) + 1
+            default: sinceIndex = untilIndex - (range.amount - 1)
+            }
+            return UsageWindow(
+                range: range,
+                sinceDay: UsageDay.string(fromIndex: sinceIndex),
+                untilDay: untilDay,
+                timeZone: timeZone,
+                timed: nil)
+        }
     }
 
     /// Every day of the window, oldest first.
@@ -61,17 +141,17 @@ struct UsageWindow: Equatable {
         return (since...until).map(UsageDay.string(fromIndex:))
     }
 
-    /// The start of every hour of an hourly window, oldest first.
-    var allHourStarts: [Int] {
-        guard let hourly else { return [] }
-        return Array(stride(from: hourly.sinceMs, to: hourly.untilMs, by: Self.hourMs))
+    /// The start of every bucket of a rolling window, oldest first.
+    var allBucketStarts: [Int] {
+        guard let timed else { return [] }
+        return Array(stride(from: timed.sinceMs, to: timed.untilMs, by: timed.bucketMs))
     }
 
     /// No record in a file last modified before this can fall in the window. The slack
     /// covers a session whose last write lands just before midnight on the first day.
     var earliestRelevantModificationMs: Int {
         let slackMs = 36 * Self.hourMs
-        if let hourly { return hourly.sinceMs - slackMs }
+        if let timed { return timed.sinceMs - slackMs }
         let sinceIndex = UsageDay.index(of: sinceDay) ?? 0
         return sinceIndex * Self.dayMs - slackMs
     }
@@ -103,6 +183,21 @@ enum UsageDay {
         return UsageTimestamp.daysFromCivil(year: parts[0], month: parts[1], day: parts[2])
     }
 
+    /// The day index `months` calendar months before a day index, on the same day of the
+    /// month or the last day of a shorter month.
+    static func index(monthsBefore months: Int, dayIndex: Int) -> Int {
+        let parts = string(fromIndex: dayIndex).split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return dayIndex - 30 * months }
+        let monthsSinceYearZero = parts[0] * 12 + (parts[1] - 1) - months
+        let year = monthsSinceYearZero >= 0 ? monthsSinceYearZero / 12 : (monthsSinceYearZero - 11) / 12
+        let month = monthsSinceYearZero - year * 12 + 1
+        let nextMonthStart = month == 12
+            ? UsageTimestamp.daysFromCivil(year: year + 1, month: 1, day: 1)
+            : UsageTimestamp.daysFromCivil(year: year, month: month + 1, day: 1)
+        let monthLength = nextMonthStart - UsageTimestamp.daysFromCivil(year: year, month: month, day: 1)
+        return UsageTimestamp.daysFromCivil(year: year, month: month, day: min(parts[2], monthLength))
+    }
+
     /// The `YYYY-MM-DD` string of a day index (Howard Hinnant's algorithm).
     static func string(fromIndex index: Int) -> String {
         let shifted = index + 719_468
@@ -118,10 +213,10 @@ enum UsageDay {
     }
 }
 
-/// The usage of one model of one provider on one day, or in one hour of an hourly window.
+/// The usage of one model of one provider on one day, or in one bucket of a rolling window.
 struct UsageBucket: Equatable {
     let day: String
-    let hourStartMs: Int?
+    let startMs: Int?
     let provider: UsageProvider
     let model: String
     var totals = UsageTokenTotals()
@@ -134,7 +229,7 @@ struct UsageBucket: Equatable {
     var unpricedRecords = 0
 }
 
-/// Folds usage records into buckets by day (or hour), provider and model, pricing them
+/// Folds usage records into buckets by day (or time bucket), provider and model, pricing them
 /// as they come in.
 ///
 /// De-duplication spans every file of a scan: Claude Code copies a message's records into
@@ -143,7 +238,7 @@ struct UsageBucket: Equatable {
 final class UsageAggregator {
     private struct Key: Hashable {
         let day: String
-        let hourStartMs: Int?
+        let startMs: Int?
         let provider: UsageProvider
         let model: String
     }
@@ -184,24 +279,24 @@ final class UsageAggregator {
             }
         }
 
-        if let hourly = window.hourly,
-           record.timestampMs < hourly.sinceMs || record.timestampMs >= hourly.untilMs {
+        if let timed = window.timed,
+           record.timestampMs < timed.sinceMs || record.timestampMs >= timed.untilMs {
             outOfWindow += 1
             return false
         }
 
         let day = self.day(ofMs: record.timestampMs)
-        if window.hourly == nil, day < window.sinceDay || day > window.untilDay {
+        if window.timed == nil, day < window.sinceDay || day > window.untilDay {
             outOfWindow += 1
             return false
         }
 
-        let hourStartMs = window.hourly.map { hourly in
-            hourly.sinceMs + (record.timestampMs - hourly.sinceMs) / UsageWindow.hourMs * UsageWindow.hourMs
+        let startMs = window.timed.map { timed in
+            timed.sinceMs + (record.timestampMs - timed.sinceMs) / timed.bucketMs * timed.bucketMs
         }
-        let key = Key(day: day, hourStartMs: hourStartMs, provider: record.provider, model: record.model)
+        let key = Key(day: day, startMs: startMs, provider: record.provider, model: record.model)
         var bucket = buckets[key] ?? UsageBucket(
-            day: day, hourStartMs: hourStartMs, provider: record.provider, model: record.model)
+            day: day, startMs: startMs, provider: record.provider, model: record.model)
 
         let rate = self.rate(for: record.model)
         bucket.totals += record.totals
@@ -223,7 +318,7 @@ final class UsageAggregator {
     func finish() -> [UsageBucket] {
         buckets.values.sorted { lhs, rhs in
             if lhs.day != rhs.day { return lhs.day < rhs.day }
-            if lhs.hourStartMs != rhs.hourStartMs { return (lhs.hourStartMs ?? 0) < (rhs.hourStartMs ?? 0) }
+            if lhs.startMs != rhs.startMs { return (lhs.startMs ?? 0) < (rhs.startMs ?? 0) }
             if lhs.provider != rhs.provider { return lhs.provider.rawValue < rhs.provider.rawValue }
             return lhs.model < rhs.model
         }
