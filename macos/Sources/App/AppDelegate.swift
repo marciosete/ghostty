@@ -242,6 +242,9 @@ class AppDelegate: NSObject,
             updateController.startUpdater()
         } else {
             menuCheckForUpdates?.isHidden = true
+            if let menu = menuCheckForUpdates?.menu {
+                GhosttyProUpdater.shared.installMenuItem(in: menu, after: menuCheckForUpdates)
+            }
         }
 
         // Register our service provider. This must happen after everything is initialized.
