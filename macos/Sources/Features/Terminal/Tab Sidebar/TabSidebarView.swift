@@ -124,18 +124,22 @@ struct TabSidebarView: View {
 
             Divider()
 
-            Button {
-                model.newTab()
-            } label: {
-                Label("New Session", systemImage: "plus")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+            HStack(spacing: 8) {
+                Button {
+                    model.newTab()
+                } label: {
+                    Label("New Session", systemImage: "plus")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("New Session")
+
+                CaffeineButton()
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
-            .help("New Session")
         }
         .background(TabSidebarVisualEffectBackground())
         .overlay(alignment: .trailing) { resizeHandle }

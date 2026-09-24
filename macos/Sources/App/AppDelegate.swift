@@ -221,6 +221,9 @@ class AppDelegate: NSObject,
         // Store our start time
         applicationLaunchTime = ProcessInfo.processInfo.systemUptime
 
+        // Let the Mac sleep again if we crashed while keeping it awake.
+        Caffeine.shared.restoreAfterLaunch()
+
         // Check if secure input was enabled when we last quit.
         if UserDefaults.ghostty.bool(forKey: "SecureInput") != SecureInput.shared.enabled {
             toggleSecureInput(self)
@@ -447,6 +450,9 @@ class AppDelegate: NSObject,
         // so remove them all now. In the future we may want to be
         // more selective and only remove surface-targeted notifications.
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+
+        // The Mac only stays awake while we run, so it can't be left sleepless unseen.
+        Caffeine.shared.stop()
     }
 
     /// This is called when the application is already open and someone double-clicks the icon
