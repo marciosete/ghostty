@@ -32,7 +32,9 @@ struct UsageCachedTranscript: Equatable {
 ///
 /// Records are stored as positional rows with the model and session strings interned.
 enum UsageScanCache {
-    private static let version = 1
+    /// Version 2 added one hour cache writes. An older cache is dropped and every
+    /// transcript read again, so cache writes are priced by the cache they went to.
+    private static let version = 2
 
     /// Keeps only the first record of each key, within one file. Callers stitching a
     /// resumed parse together pass one `seen` set across its parts.
@@ -68,6 +70,7 @@ enum UsageScanCache {
                 record.totals.reasoning,
                 record.dedupeKey ?? NSNull(),
                 record.reportedCostUsd ?? NSNull(),
+                record.totals.cacheCreation1h,
             ]
         }
 
@@ -111,7 +114,7 @@ enum UsageScanCache {
             var records: [UsageRecord] = []
             records.reserveCapacity(rows.count)
             for row in rows {
-                guard row.count == 10,
+                guard row.count == 11,
                       let timestampMs = row[0] as? Int,
                       let modelIndex = row[1] as? Int, models.indices.contains(modelIndex),
                       let sessionIndex = row[2] as? Int, sessions.indices.contains(sessionIndex),
@@ -119,7 +122,8 @@ enum UsageScanCache {
                       let cachedInput = row[4] as? Int,
                       let cacheCreation = row[5] as? Int,
                       let output = row[6] as? Int,
-                      let reasoning = row[7] as? Int else { return nil }
+                      let reasoning = row[7] as? Int,
+                      let cacheCreation1h = row[10] as? Int else { return nil }
                 records.append(UsageRecord(
                     provider: provider,
                     timestampMs: timestampMs,
@@ -129,6 +133,7 @@ enum UsageScanCache {
                         uncachedInput: uncachedInput,
                         cachedInput: cachedInput,
                         cacheCreation: cacheCreation,
+                        cacheCreation1h: cacheCreation1h,
                         output: output,
                         reasoning: reasoning),
                     reportedCostUsd: UsageJSON.number(row[9]),

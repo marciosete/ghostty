@@ -7,11 +7,17 @@ struct UsageModelRate: Equatable {
     let cacheRead: Double
     let cacheCreation: Double
 
-    /// The cost of `totals` at these rates. Reasoning tokens are already in `output`.
+    /// Writing to the one hour cache, which Anthropic bills at twice the input rate
+    /// rather than the 1.25 times of the five minute cache.
+    let cacheCreation1h: Double
+
+    /// The cost of `totals` at these rates. Reasoning tokens are already in `output`, and
+    /// one hour cache writes in `cacheCreation`.
     func cost(of totals: UsageTokenTotals) -> Double {
         Double(totals.uncachedInput) * input
             + Double(totals.cachedInput) * cacheRead
-            + Double(totals.cacheCreation) * cacheCreation
+            + Double(totals.cacheCreation - totals.cacheCreation1h) * cacheCreation
+            + Double(totals.cacheCreation1h) * cacheCreation1h
             + Double(totals.output) * output
     }
 
@@ -52,12 +58,15 @@ struct UsageRateTable {
             guard !key.isEmpty else { continue }
 
             // Anthropic bills cache reads at a discount and cache writes at a premium.
-            // When a model has neither, cached input is priced as input, not as free.
+            // When a model has neither, cached input is priced as input, not as free. A
+            // model without a one hour write rate is priced at its five minute one.
+            let cacheCreation = UsageJSON.number(entry["cache_creation_input_token_cost"]) ?? input
             rates[key] = UsageModelRate(
                 input: input,
                 output: output,
                 cacheRead: UsageJSON.number(entry["cache_read_input_token_cost"]) ?? input,
-                cacheCreation: UsageJSON.number(entry["cache_creation_input_token_cost"]) ?? input)
+                cacheCreation: cacheCreation,
+                cacheCreation1h: UsageJSON.number(entry["cache_creation_input_token_cost_above_1hr"]) ?? cacheCreation)
         }
 
         var aliases: [String: UsageModelRate] = [:]

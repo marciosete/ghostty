@@ -63,6 +63,37 @@ struct UsageClaudeParserTests {
         #expect(record.dedupeKey == "msg_1:")
     }
 
+    @Test func splitsOneHourCacheWrites() throws {
+        let data = json([
+            "type": "assistant",
+            "timestamp": "2026-08-07T04:05:13.944Z",
+            "message": [
+                "id": "msg_1h",
+                "model": "claude-fable-5",
+                "usage": [
+                    "input_tokens": 2,
+                    "cache_creation_input_tokens": 1000,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 10,
+                    "cache_creation": ["ephemeral_1h_input_tokens": 700, "ephemeral_5m_input_tokens": 300],
+                ],
+            ],
+        ])
+        let record = try #require(UsageTranscripts.parseClaudeLine(data))
+        #expect(record.totals.cacheCreation == 1000)
+        #expect(record.totals.cacheCreation1h == 700)
+
+        // Transcripts from before the split count every write as five minute.
+        let old = try #require(UsageTranscripts.parseClaudeLine(line(messageId: "msg_1", contentType: "text")))
+        #expect(old.totals.cacheCreation1h == 0)
+
+        let cache = ["/a.jsonl": UsageCachedTranscript(
+            size: 1, mtimeNs: 1, provider: .claude, records: [record], tailRecords: [],
+            position: UsageParsePosition(resumeOffset: 0, guardLength: 0, guardHash: 0))]
+        let encoded = try #require(UsageScanCache.encode(cache))
+        #expect(UsageScanCache.decode(encoded)["/a.jsonl"]?.records.first?.totals.cacheCreation1h == 700)
+    }
+
     @Test func contentBlocksOfOneMessageShareTheirKey() {
         let text = UsageTranscripts.parseClaudeLine(line(messageId: "msg_2", contentType: "text"))
         let toolUse = UsageTranscripts.parseClaudeLine(line(messageId: "msg_2", contentType: "tool_use"))
@@ -163,6 +194,22 @@ struct UsagePricingTests {
         let rate = UsageRateTable(liteLLM: ["model": rate(2)]).rate(for: "model")
         #expect(rate?.cacheRead == 2)
         #expect(rate?.cacheCreation == 2)
+        #expect(rate?.cacheCreation1h == 2)
+    }
+
+    @Test func pricesOneHourCacheWritesAtTheirOwnRate() throws {
+        // Anthropic's rates for Claude Fable 5, per token.
+        let table = UsageRateTable(liteLLM: ["claude-fable-5": [
+            "input_cost_per_token": 10e-6,
+            "output_cost_per_token": 50e-6,
+            "cache_read_input_token_cost": 1e-6,
+            "cache_creation_input_token_cost": 12.5e-6,
+            "cache_creation_input_token_cost_above_1hr": 20e-6,
+        ]])
+        let rate = try #require(table.rate(for: "claude-fable-5"))
+        let totals = UsageTokenTotals(cacheCreation: 1_000_000, cacheCreation1h: 700_000)
+        // 300K five minute writes at $12.50/M and 700K one hour writes at $20/M.
+        #expect(abs(rate.cost(of: totals) - (3.75 + 14)) < 1e-9)
     }
 }
 

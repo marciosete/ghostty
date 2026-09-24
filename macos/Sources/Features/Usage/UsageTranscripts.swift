@@ -16,11 +16,14 @@ enum UsageProvider: String, CaseIterable {
 ///
 /// `cachedInput` and `cacheCreation` are disjoint from `uncachedInput`, so the three sum
 /// to the total input. `reasoning` is a subset of `output` (Grok reports it that way, and
-/// Anthropic folds thinking into output), so it's never added on top.
+/// Anthropic folds thinking into output), so it's never added on top. Likewise
+/// `cacheCreation1h` is the part of `cacheCreation` written to the one hour cache, which
+/// costs more than the five minute one.
 struct UsageTokenTotals: Equatable {
     var uncachedInput = 0
     var cachedInput = 0
     var cacheCreation = 0
+    var cacheCreation1h = 0
     var output = 0
     var reasoning = 0
 
@@ -31,6 +34,7 @@ struct UsageTokenTotals: Equatable {
         lhs.uncachedInput += rhs.uncachedInput
         lhs.cachedInput += rhs.cachedInput
         lhs.cacheCreation += rhs.cacheCreation
+        lhs.cacheCreation1h += rhs.cacheCreation1h
         lhs.output += rhs.output
         lhs.reasoning += rhs.reasoning
     }
@@ -79,6 +83,11 @@ enum UsageTranscripts {
             ? nil
             : "\(messageId ?? ""):\(requestId ?? "")"
 
+        // Cache writes are split between the five minute and the one hour cache.
+        let cacheCreation = UsageJSON.count(usage["cache_creation_input_tokens"])
+        let cacheCreationSplit = usage["cache_creation"] as? [String: Any]
+        let cacheCreation1h = min(cacheCreation, UsageJSON.count(cacheCreationSplit?["ephemeral_1h_input_tokens"]))
+
         return UsageRecord(
             provider: .claude,
             timestampMs: timestampMs,
@@ -87,7 +96,8 @@ enum UsageTranscripts {
             totals: UsageTokenTotals(
                 uncachedInput: UsageJSON.count(usage["input_tokens"]),
                 cachedInput: UsageJSON.count(usage["cache_read_input_tokens"]),
-                cacheCreation: UsageJSON.count(usage["cache_creation_input_tokens"]),
+                cacheCreation: cacheCreation,
+                cacheCreation1h: cacheCreation1h,
                 output: UsageJSON.count(usage["output_tokens"]),
                 // Anthropic folds thinking tokens into output and doesn't break them out.
                 reasoning: 0),
