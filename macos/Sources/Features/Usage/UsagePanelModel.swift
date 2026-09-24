@@ -9,6 +9,8 @@ final class UsageSettings: ObservableObject {
     private static let widthKey = "UsagePanelWidth"
     private static let metricKey = "UsagePanelMetric"
     private static let rangeKey = "UsagePanelRange"
+    private static let scopeKey = "UsagePanelScope"
+    private static let workFoldersKey = "UsageWorkFolders"
 
     /// Where builds before custom ranges saved the window, in days. 1 was the past 24 hours.
     private static let legacyWindowDaysKey = "UsagePanelWindowDays"
@@ -33,6 +35,30 @@ final class UsageSettings: ObservableObject {
         didSet { UserDefaults.ghostty.set(range.storageValue, forKey: Self.rangeKey) }
     }
 
+    @Published var scope: UsageScope {
+        didSet { UserDefaults.ghostty.set(scope.rawValue, forKey: Self.scopeKey) }
+    }
+
+    /// The folders whose sessions are work, as absolute paths. Everything else is projects.
+    @Published var workFolders: [String] {
+        didSet { UserDefaults.ghostty.set(workFolders, forKey: Self.workFoldersKey) }
+    }
+
+    var scopeFilter: UsageScopeFilter {
+        UsageScopeFilter(scope: scope, workFolders: workFolders)
+    }
+
+    func addWorkFolder(_ path: String) {
+        let path = (path as NSString).standardizingPath
+        guard !workFolders.contains(path) else { return }
+        workFolders.append(path)
+        workFolders.sort()
+    }
+
+    func removeWorkFolder(_ path: String) {
+        workFolders.removeAll { $0 == path }
+    }
+
     private init() {
         let defaults = UserDefaults.ghostty
         isVisible = defaults.bool(forKey: Self.visibleKey)
@@ -41,6 +67,8 @@ final class UsageSettings: ObservableObject {
         width = storedWidth > 0 ? Self.clampWidth(CGFloat(storedWidth)) : Self.defaultWidth
 
         metric = defaults.string(forKey: Self.metricKey).flatMap(UsageMetric.init(rawValue:)) ?? .cost
+        scope = defaults.string(forKey: Self.scopeKey).flatMap(UsageScope.init(rawValue:)) ?? .all
+        workFolders = defaults.stringArray(forKey: Self.workFoldersKey) ?? []
 
         if let stored = defaults.string(forKey: Self.rangeKey).flatMap(UsageRange.init(storageValue:)) {
             range = stored
@@ -119,6 +147,13 @@ final class UsagePanelModel: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] range in self?.refresh(range: range) }
             .store(in: &cancellables)
+
+        settings.$scope.combineLatest(settings.$workFolders)
+            .dropFirst()
+            .map { UsageScopeFilter(scope: $0, workFolders: $1) }
+            .removeDuplicates()
+            .sink { [weak self] filter in self?.refresh(filter: filter) }
+            .store(in: &cancellables)
     }
 
     /// Reads the plan limits again. Automatic checks are spaced out; `force` is the
@@ -152,11 +187,16 @@ final class UsagePanelModel: ObservableObject {
     }
 
     /// Scans the transcripts again. `refreshRates` also downloads the model prices again.
-    func refresh(range: UsageRange? = nil, refreshRates: Bool = false) {
+    /// `range` and `filter` are passed while the settings are about to change to them.
+    func refresh(range: UsageRange? = nil, filter: UsageScopeFilter? = nil, refreshRates: Bool = false) {
         latestScan += 1
         let scan = latestScan
         isScanning = true
-        scanner.scan(.last(range ?? settings.range), refreshRates: refreshRates) { [weak self] report in
+        scanner.scan(
+            .last(range ?? settings.range),
+            filter: filter ?? settings.scopeFilter,
+            refreshRates: refreshRates
+        ) { [weak self] report in
             guard let self, scan == self.latestScan else { return }
             self.summary = UsageSummary(report)
             self.isScanning = false

@@ -78,12 +78,18 @@ final class UsageScanner {
     private var cacheURL: URL { storageDirectory.appendingPathComponent("transcripts.json") }
     private var ratesURL: URL { storageDirectory.appendingPathComponent("model-rates.json") }
 
-    /// Scans `window` in the background and calls `completion` on the main queue.
-    /// `refreshRates` downloads the model rates even if they're less than a day old, so a
-    /// model added to the table since gets a price.
-    func scan(_ window: UsageWindow, refreshRates: Bool = false, completion: @escaping (UsageReport) -> Void) {
+    /// Scans `window` in the background and calls `completion` on the main queue. Only
+    /// the transcripts `filter` includes count. `refreshRates` downloads the model rates
+    /// even if they're less than a day old, so a model added to the table since gets a
+    /// price.
+    func scan(
+        _ window: UsageWindow,
+        filter: UsageScopeFilter = UsageScopeFilter(scope: .all, workFolders: []),
+        refreshRates: Bool = false,
+        completion: @escaping (UsageReport) -> Void
+    ) {
         queue.async {
-            let report = self.performScan(window, refreshRates: refreshRates)
+            let report = self.performScan(window, filter: filter, refreshRates: refreshRates)
             DispatchQueue.main.async { completion(report) }
         }
     }
@@ -136,7 +142,7 @@ final class UsageScanner {
         }
     }
 
-    private func performScan(_ window: UsageWindow, refreshRates: Bool) -> UsageReport {
+    private func performScan(_ window: UsageWindow, filter: UsageScopeFilter, refreshRates: Bool) -> UsageReport {
         let startedAt = Date()
         let nowMs = Int(startedAt.timeIntervalSince1970 * 1000)
         let retentionCutoffMs = nowMs - Self.retentionMs
@@ -178,7 +184,7 @@ final class UsageScanner {
             }
 
             var sessions: Set<String> = []
-            for file in files {
+            for file in files where filter.includes(path: file.path, in: source.directory, provider: source.provider) {
                 for record in file.records {
                     // Only sessions with usage in the window count. The modification
                     // time slack lets in files whose records fall outside it.

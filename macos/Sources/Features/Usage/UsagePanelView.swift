@@ -52,18 +52,80 @@ struct UsagePanelView: View {
             if isWide {
                 HStack(spacing: 8) {
                     metricPicker
+                    scopeControls
                     Spacer(minLength: 0)
                     rangeControls
                 }
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     metricPicker
+                    scopeControls
                     rangeControls
                 }
+            }
+
+            if settings.scope != .all && settings.workFolders.isEmpty {
+                Text("No work folders yet, so everything counts as Projects. Add one from the folder menu.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: Scope
+
+    private var scopeControls: some View {
+        HStack(spacing: 4) {
+            Picker("Scope", selection: $settings.scope) {
+                ForEach(UsageScope.allCases, id: \.self) { scope in
+                    Text(scope.title).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .help("Work counts sessions started in your work folders. Projects counts the rest.")
+
+            workFoldersMenu
+        }
+    }
+
+    private var workFoldersMenu: some View {
+        Menu {
+            Section("Work Folders") {
+                if settings.workFolders.isEmpty {
+                    Text("None yet")
+                }
+                ForEach(settings.workFolders, id: \.self) { folder in
+                    Menu((folder as NSString).abbreviatingWithTildeInPath) {
+                        Button("Remove") { settings.removeWorkFolder(folder) }
+                    }
+                }
+            }
+            Divider()
+            Button("Add Work Folder…") { chooseWorkFolders() }
+        } label: {
+            Image(systemName: "folder.badge.gearshape")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Work folders: sessions started in one, or in a folder inside it, count as Work")
+    }
+
+    private func chooseWorkFolders() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add"
+        panel.message = "Sessions started in these folders, or in folders inside them, count as Work."
+        guard panel.runModal() == .OK else { return }
+        panel.urls.forEach { settings.addWorkFolder($0.path) }
     }
 
     private var metricPicker: some View {
