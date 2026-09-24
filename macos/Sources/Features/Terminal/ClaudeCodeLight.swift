@@ -26,7 +26,7 @@ enum ClaudeCodeLight: CaseIterable {
         switch self {
         case .working: return .blue
         case .pending: return .yellow
-        case .unlanded: return .purple
+        case .unlanded: return .teal
         case .waiting: return .red
         case .clean: return .green
         }
@@ -60,7 +60,7 @@ enum ClaudeCodeLight: CaseIterable {
 }
 
 /// What an `auto` tab shows of the Claude Code sessions in its terminals: its color, and
-/// while it is yellow, how many files are waiting to be committed, or while it is purple,
+/// while it is yellow, how many files are waiting to be committed, or while it is teal,
 /// how many commits are waiting to land.
 struct ClaudeCodeTabState: Equatable {
     let light: ClaudeCodeLight
@@ -105,7 +105,7 @@ struct ClaudeCodeTabState: Equatable {
     }
 
     /// The number shown on the tab: the files waiting to be committed while it is yellow,
-    /// and the commits waiting to land while it is purple.
+    /// and the commits waiting to land while it is teal.
     var badge: Int? {
         switch light {
         case .pending: return pendingFiles > 0 ? pendingFiles : nil
@@ -129,7 +129,7 @@ struct ClaudeCodeTabState: Equatable {
     }
 
     /// The worktrees that can land now: everything in them is committed and some of it
-    /// isn't on the base branch yet. Only offered while the tab is purple, so no session
+    /// isn't on the base branch yet. Only offered while the tab is teal, so no session
     /// of the tab is working or has files to commit.
     var landableWorktrees: [Git.Worktree] {
         guard light == .unlanded else { return [] }

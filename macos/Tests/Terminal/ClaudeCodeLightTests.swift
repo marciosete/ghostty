@@ -39,16 +39,16 @@ struct ClaudeCodeLightTests {
         #expect(ClaudeCodeTabState(light: .working).badge == nil)
     }
 
-    @Test func committedButNotLandedIsPurple() {
+    @Test func committedButNotLandedIsTeal() {
         #expect(ClaudeCodeLight(status: "idle", pending: false, unlanded: true) == .unlanded)
         #expect(ClaudeCodeLight(status: "idle", pending: true, unlanded: true) == .pending)
         #expect(ClaudeCodeLight(status: "busy", pending: false, unlanded: true) == .working)
-        #expect(ClaudeCodeLight.unlanded.tabColor == .purple)
+        #expect(ClaudeCodeLight.unlanded.tabColor == .teal)
         #expect(ClaudeCodeLight.mostUrgent([.clean, .unlanded]) == .unlanded)
         #expect(ClaudeCodeLight.mostUrgent([.unlanded, .pending]) == .pending)
     }
 
-    @Test func badgeCountsCommitsWhilePurple() {
+    @Test func badgeCountsCommitsWhileTeal() {
         let worktree = Git.Worktree(
             root: URL(fileURLWithPath: "/repo/.claude/worktrees/a"),
             gitDir: URL(fileURLWithPath: "/repo/.git/worktrees/a"),
@@ -62,7 +62,7 @@ struct ClaudeCodeLightTests {
         #expect(state.landableWorktrees == [worktree])
         #expect(state.landingBranch == "main")
 
-        // Only a purple tab can land: yellow still has files to commit.
+        // Only a teal tab can land: yellow still has files to commit.
         let pending = ClaudeCodeTabState(light: .pending, pendingFiles: 1, editedFiles: 1, unlandedCommits: 2, worktrees: [worktree])
         #expect(pending.landableWorktrees.isEmpty)
         #expect(pending.badgeHelp == "1 file not committed")
