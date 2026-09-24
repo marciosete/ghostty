@@ -8,6 +8,7 @@ struct ClaudeCodeLightTests {
 
     @Test func statusColors() {
         #expect(ClaudeCodeLight(status: "busy", pending: false)?.tabColor == .blue)
+        #expect(ClaudeCodeLight(status: "shell", pending: true)?.tabColor == .blue)
         #expect(ClaudeCodeLight(status: "idle", pending: true)?.tabColor == .yellow)
         #expect(ClaudeCodeLight(status: "waiting", pending: false)?.tabColor == .red)
         #expect(ClaudeCodeLight(status: "idle", pending: false)?.tabColor == .green)

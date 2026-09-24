@@ -49,9 +49,11 @@ enum ClaudeCodeLight: CaseIterable {
 
     /// The light for a session in `status`, the value Claude Code writes to its registry
     /// entry. Unknown values show nothing, so a new state isn't shown as the wrong one.
+    /// "shell" is a session whose turn ended while shell commands it started in the
+    /// background still run: Claude Code calls it working, and picks up their results.
     init?(status: String, pending: Bool, unlanded: Bool = false) {
         switch status {
-        case "busy": self = .working
+        case "busy", "shell": self = .working
         case "waiting": self = .waiting
         case "idle": self = pending ? .pending : unlanded ? .unlanded : .clean
         default: return nil
