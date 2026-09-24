@@ -26,9 +26,15 @@ struct SourceControlPanelView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("SOURCE CONTROL")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack {
+                Text("SOURCE CONTROL")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 8)
+
+                SidePanelCloseButton(help: "Hide Source Control (⌘L)") { settings.isVisible = false }
+            }
 
             if case let .ready(repository, status) = model.state {
                 Text(repository.root.lastPathComponent)

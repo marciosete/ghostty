@@ -45,6 +45,7 @@ struct UsagePanelView: View {
                 Spacer(minLength: 8)
 
                 refreshButton
+                SidePanelCloseButton(help: "Hide Usage (⌘U)") { settings.isVisible = false }
             }
 
             // A narrow panel can't fit the range controls beside the metric.

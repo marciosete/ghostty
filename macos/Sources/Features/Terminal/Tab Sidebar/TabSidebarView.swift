@@ -541,6 +541,25 @@ struct TabSidebarVisualEffectBackground: NSViewRepresentable {
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
+/// The × in the header of a panel beside the terminal, for those who don't know its
+/// shortcut. `help` names the shortcut.
+struct SidePanelCloseButton: View {
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .frame(width: 20, height: 20)
+        .help(help)
+        .accessibilityLabel("Close")
+    }
+}
+
 // MARK: - Drag and Drop
 
 enum TabSidebarDropPlacement {
