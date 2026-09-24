@@ -117,6 +117,20 @@ class BaseTerminalController: NSWindowController,
         return computeTitle(title: titleOverride, bell: focusedSurface?.bell ?? false)
     }
 
+    /// What renaming the session starts from. Claude Code puts its status in front of its
+    /// title (◐ or ◑ while it works, ✳ once it stops), and a name keeps whatever it was
+    /// renamed to, so the status is left out.
+    var renameDraft: String {
+        Self.withoutClaudeCodeStatus(titleOverride ?? sessionTitle)
+    }
+
+    static func withoutClaudeCodeStatus(_ title: String) -> String {
+        for status in ["◐", "◑", "◒", "◓", "✳"] where title.hasPrefix(status + " ") {
+            return String(title.dropFirst(status.count + 1))
+        }
+        return title
+    }
+
     /// The time that undo/redo operations that contain running ptys are valid for.
     var undoExpiration: Duration {
         ghostty.config.undoTimeout
@@ -441,7 +455,7 @@ class BaseTerminalController: NSWindowController,
         alert.alertStyle = .informational
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
-        textField.stringValue = titleOverride ?? sessionTitle
+        textField.stringValue = renameDraft
         alert.accessoryView = textField
 
         alert.addButton(withTitle: "OK")

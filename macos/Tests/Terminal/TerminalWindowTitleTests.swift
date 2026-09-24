@@ -34,4 +34,12 @@ struct TerminalWindowTitleTests {
         window.userTabGroupID = nil
         #expect(window.title == "Fix the usage panel")
     }
+
+    @Test func renamingLeavesOutClaudeCodeStatus() {
+        #expect(BaseTerminalController.withoutClaudeCodeStatus("◑ Process Review") == "Process Review")
+        #expect(BaseTerminalController.withoutClaudeCodeStatus("◐ Process Review") == "Process Review")
+        #expect(BaseTerminalController.withoutClaudeCodeStatus("✳ Claude Code") == "Claude Code")
+        #expect(BaseTerminalController.withoutClaudeCodeStatus("Process Review") == "Process Review")
+        #expect(BaseTerminalController.withoutClaudeCodeStatus("◑Process") == "◑Process")
+    }
 }

@@ -290,7 +290,7 @@ final class TabSidebarModel: ObservableObject {
 
     func beginRename(_ window: TerminalWindow) {
         commitEditing()
-        editingDraft = window.terminalController?.titleOverride ?? window.sessionTitle ?? window.title
+        editingDraft = window.terminalController?.renameDraft ?? window.title
         editingTabID = ObjectIdentifier(window)
     }
 
