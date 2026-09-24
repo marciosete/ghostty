@@ -283,6 +283,28 @@ struct ClaudeCodeLightTests {
         #expect(Git.status(of: mainRepository)?.base == nil)
     }
 
+    @Test func upstreamCommitsAreNotUnlanded() throws {
+        // A clone whose main hasn't been pulled, with a worktree branched from origin/main.
+        let (made, upstream, _) = try Self.repositoryWithWorktree()
+        defer { try? FileManager.default.removeItem(at: made) }
+        let clone = made.appendingPathComponent("clone")
+        try Self.git(["clone", "-q", upstream.path, clone.path], in: made)
+        try Self.commit("pulled.txt", "pulled\n", in: upstream)
+        try Self.commit("pulled-too.txt", "pulled\n", in: upstream)
+        try Self.git(["fetch", "-q"], in: clone)
+        let worktreeURL = made.appendingPathComponent("b")
+        try Self.git(["worktree", "add", "-q", "-b", "worktree-b", worktreeURL.path, "origin/main"], in: clone)
+
+        let worktree = try #require(Git.linkedWorktree(containing: worktreeURL))
+        #expect(Git.progress(of: worktree)?.unlandedCommits == 0)
+        let repository = try #require(Git.repository(containing: worktreeURL))
+        #expect(Git.status(of: repository)?.ahead == 0)
+
+        try Self.commit("mine.txt", "mine\n", in: worktreeURL)
+        #expect(Git.progress(of: worktree)?.unlandedCommits == 1)
+        #expect(Git.status(of: repository)?.ahead == 1)
+    }
+
     private static func output(_ arguments: [String], in directory: URL) throws -> String {
         let process = Process()
         process.executableURL = Git.executableURL

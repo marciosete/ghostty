@@ -127,15 +127,14 @@ enum Git {
         guard let list = run(["worktree", "list", "--porcelain", "-z"], in: repository.root),
               let base = parseWorktreeList(list).first?.branch,
               base != branch,
-              let counts = run(["rev-list", "--left-right", "--count", "refs/heads/\(base)...HEAD"], in: repository.root)
+              let behind = run(["rev-list", "--count", "HEAD..refs/heads/\(base)"], in: repository.root)
+                .flatMap({ Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }),
+              let ahead = unlandedCommits(on: base, in: repository.root)
         else { return }
 
-        // "<only on base> <only on HEAD>"
-        let fields = counts.split(whereSeparator: \.isWhitespace).compactMap { Int($0) }
-        guard fields.count == 2 else { return }
         status.base = base
-        status.behind = fields[0]
-        status.ahead = fields[1]
+        status.behind = behind
+        status.ahead = ahead
     }
 
     /// Parses `git status --porcelain=v2 --branch -z`.
@@ -324,11 +323,23 @@ enum Git {
         }
         var unlanded = 0
         if let base = worktree.baseBranch {
-            guard let count = run(["rev-list", "--count", "refs/heads/\(base)..HEAD"], in: worktree.root)
-                .flatMap({ Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }) else { return nil }
+            guard let count = unlandedCommits(on: base, in: worktree.root) else { return nil }
             unlanded = count
         }
         return (changedPaths(porcelain: status).count, unlanded)
+    }
+
+    /// The commits on HEAD that aren't on `base`, nor on its upstream. A worktree is
+    /// usually branched from the upstream, which can be ahead of `base` when `base` hasn't
+    /// been pulled, and those commits have landed already.
+    private static func unlandedCommits(on base: String, in directory: URL) -> Int? {
+        let upstream = run(["for-each-ref", "--format=%(upstream)", "refs/heads/\(base)"], in: directory)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var arguments = ["rev-list", "--count", "HEAD", "^refs/heads/\(base)"]
+        if let upstream, !upstream.isEmpty, run(["rev-parse", "--verify", "--quiet", upstream], in: directory) != nil {
+            arguments.append("^\(upstream)")
+        }
+        return run(arguments, in: directory).flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
     }
 
     enum LandError: Error {
