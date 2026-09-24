@@ -1555,7 +1555,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         syncAppearance(focusedSurface.derivedConfig)
 
         // The source control panel shows the repository of the focused terminal's
-        // working directory. This also fires right away with the current directory.
+        // working directory, or of the directory Claude Code runs in there. The pwd
+        // also fires right away with the current directory.
+        (window as? TerminalWindow)?.sourceControlModel.setTerminal { [weak focusedSurface] in
+            focusedSurface?.surfaceModel?.foregroundPID
+        }
         focusedSurface.$pwd
             .removeDuplicates()
             .sink { [weak self] pwd in

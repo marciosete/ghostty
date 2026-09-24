@@ -77,6 +77,12 @@ struct ClaudeCodeSession: Codable, Equatable {
         return session
     }
 
+    /// The directory Claude Code runs in, if process `pid` is Claude Code. A session
+    /// started with `--worktree` runs in its worktree, not where it was started.
+    static func directory(ofRunning pid: Int) -> String? {
+        registered(pid: pid, configDirectory: configDirectory)?.session.cwd
+    }
+
     /// The session of process `pid` and what it is doing, from its registry entry.
     static func activity(pid: Int) -> (session: ClaudeCodeSession, status: String)? {
         guard let (session, entry) = registered(pid: pid, configDirectory: configDirectory),

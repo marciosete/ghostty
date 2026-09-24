@@ -35,7 +35,9 @@ final class SourceControlSettings: ObservableObject {
 }
 
 /// The state behind the source control panel of one terminal window. It follows the
-/// working directory of the window's focused terminal.
+/// window's focused terminal: the directory Claude Code runs in while it runs there, which
+/// is its worktree if it was started with `--worktree`, and the terminal's working
+/// directory otherwise.
 final class SourceControlPanelModel: ObservableObject {
     enum State: Equatable {
         /// The focused terminal hasn't reported a working directory.
@@ -55,15 +57,38 @@ final class SourceControlPanelModel: ObservableObject {
     /// Tree folders and sections the user collapsed, keyed by `SourceControlTree` ids.
     @Published var collapsed: Set<String> = []
 
+    /// How often the focused terminal is checked for Claude Code starting or exiting,
+    /// which doesn't change the terminal's working directory.
+    private static let sessionCheckInterval: TimeInterval = 2
+
+    /// The working directory the focused terminal reported.
     private var directory: String?
+
+    /// The focused terminal's foreground process.
+    private var foregroundPID: @MainActor () -> Int? = { nil }
+
+    /// The directory whose repository is shown, or is being looked up.
+    private var shownDirectory: String?
+
     private var isVisible = false
     private var monitor: GitRepositoryMonitor?
     private var monitorCancellable: AnyCancellable?
+    private var sessionCheckTimer: Timer?
 
     /// Incremented for every lookup so a slow, outdated lookup can't win over a newer one.
     private var lookupGeneration = 0
 
-    /// Sets the working directory to show the repository of.
+    deinit {
+        sessionCheckTimer?.invalidate()
+    }
+
+    /// Follows a newly focused terminal, whose foreground process `foregroundPID` returns.
+    func setTerminal(foregroundPID: @escaping @MainActor () -> Int?) {
+        self.foregroundPID = foregroundPID
+        update()
+    }
+
+    /// Sets the focused terminal's working directory.
     func setDirectory(_ directory: String?) {
         let directory = directory.flatMap { $0.isEmpty ? nil : $0 }
         guard directory != self.directory else { return }
@@ -80,18 +105,53 @@ final class SourceControlPanelModel: ObservableObject {
 
     private func update() {
         lookupGeneration += 1
+        shownDirectory = nil
 
         guard isVisible else {
+            sessionCheckTimer?.invalidate()
+            sessionCheckTimer = nil
             stopMonitoring()
             return
         }
 
-        guard let directory else {
-            stopMonitoring()
-            state = .noDirectory
-            return
+        if sessionCheckTimer == nil {
+            let timer = Timer(timeInterval: Self.sessionCheckInterval, repeats: true) { [weak self] _ in
+                self?.lookUp()
+            }
+            timer.tolerance = 0.5
+            RunLoop.main.add(timer, forMode: .common)
+            sessionCheckTimer = timer
         }
 
+        lookUp()
+    }
+
+    /// Works out which directory to show: the one Claude Code runs in, if the focused
+    /// terminal runs it, or else the terminal's working directory. Looks up its repository
+    /// if it changed.
+    private func lookUp() {
+        let generation = lookupGeneration
+        let pid = MainActor.assumeIsolated { foregroundPID() }
+        let directory = directory
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let target = pid.flatMap(ClaudeCodeSession.directory(ofRunning:)) ?? directory
+            DispatchQueue.main.async {
+                guard let self, generation == self.lookupGeneration else { return }
+                guard let target else {
+                    self.shownDirectory = nil
+                    self.stopMonitoring()
+                    self.state = .noDirectory
+                    return
+                }
+                guard target != self.shownDirectory else { return }
+                self.shownDirectory = target
+                self.lookUpRepository(of: target)
+            }
+        }
+    }
+
+    private func lookUpRepository(of directory: String) {
+        lookupGeneration += 1
         let generation = lookupGeneration
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let repository = Git.repository(containing: URL(fileURLWithPath: directory))
