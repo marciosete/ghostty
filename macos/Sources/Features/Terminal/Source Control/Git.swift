@@ -44,6 +44,10 @@ struct GitStatus: Equatable {
     /// The branch's upstream (e.g. `origin/main`), if it has one.
     var upstream: String?
 
+    /// For a worktree's branch without an upstream: the branch of the main checkout,
+    /// which `ahead` and `behind` count against instead.
+    var base: String?
+
     /// Commits on the branch that aren't on its upstream, i.e. to push.
     var ahead = 0
 
@@ -65,6 +69,12 @@ enum Git {
 
         /// The repository's git directory (usually `<root>/.git`).
         let gitDir: URL
+
+        /// The git directory shared by every worktree of the repository, which holds the
+        /// branches. It is `gitDir` unless this is a linked worktree.
+        let commonDir: URL
+
+        var isLinkedWorktree: Bool { gitDir != commonDir }
     }
 
     /// The git executable. GUI apps get a minimal PATH, so look in the usual places.
@@ -76,13 +86,17 @@ enum Git {
 
     /// Finds the repository containing `directory`, or nil if it isn't in one.
     static func repository(containing directory: URL) -> Repository? {
-        guard let output = run(["rev-parse", "--show-toplevel", "--absolute-git-dir"], in: directory) else {
-            return nil
-        }
+        guard let output = run(
+            ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"],
+            in: directory
+        ) else { return nil }
 
         let lines = output.split(separator: "\n")
-        guard lines.count >= 2 else { return nil }
-        return Repository(root: realPath(String(lines[0])), gitDir: realPath(String(lines[1])))
+        guard lines.count >= 3 else { return nil }
+        return Repository(
+            root: realPath(String(lines[0])),
+            gitDir: realPath(String(lines[1])),
+            commonDir: realPath(String(lines[2])))
     }
 
     /// Resolves symlinks the same way file system events report paths. Unlike
@@ -100,7 +114,28 @@ enum Git {
             in: repository.root
         ) else { return nil }
 
-        return parseStatus(output)
+        var status = parseStatus(output)
+        if status.upstream == nil, repository.isLinkedWorktree, let branch = status.branch {
+            compare(&status, branch: branch, withMainCheckoutOf: repository)
+        }
+        return status
+    }
+
+    /// Counts a worktree's commits against the branch of the main checkout, which they
+    /// land on, when the worktree's branch has no upstream to count against.
+    private static func compare(_ status: inout GitStatus, branch: String, withMainCheckoutOf repository: Repository) {
+        guard let list = run(["worktree", "list", "--porcelain", "-z"], in: repository.root),
+              let base = parseWorktreeList(list).first?.branch,
+              base != branch,
+              let counts = run(["rev-list", "--left-right", "--count", "refs/heads/\(base)...HEAD"], in: repository.root)
+        else { return }
+
+        // "<only on base> <only on HEAD>"
+        let fields = counts.split(whereSeparator: \.isWhitespace).compactMap { Int($0) }
+        guard fields.count == 2 else { return }
+        status.base = base
+        status.behind = fields[0]
+        status.ahead = fields[1]
     }
 
     /// Parses `git status --porcelain=v2 --branch -z`.

@@ -259,6 +259,30 @@ struct ClaudeCodeLightTests {
         #expect(Git.progress(of: worktree)?.uncommittedFiles == 0)
     }
 
+    @Test func worktreeStatusCountsAgainstTheMainCheckout() throws {
+        let (made, main, worktreeURL) = try Self.repositoryWithWorktree()
+        defer { try? FileManager.default.removeItem(at: made) }
+
+        let mainRepository = try #require(Git.repository(containing: main))
+        let repository = try #require(Git.repository(containing: worktreeURL))
+        #expect(!mainRepository.isLinkedWorktree)
+        #expect(repository.isLinkedWorktree)
+        #expect(repository.commonDir == mainRepository.gitDir)
+
+        try Self.commit("a.txt", "a\n", in: worktreeURL)
+        try Self.commit("b.txt", "b\n", in: worktreeURL)
+        try Self.commit("other.txt", "other\n", in: main)
+
+        let status = try #require(Git.status(of: repository))
+        #expect(status.upstream == nil)
+        #expect(status.base == "main")
+        #expect(status.ahead == 2)
+        #expect(status.behind == 1)
+
+        // The main checkout itself has nothing to count against.
+        #expect(Git.status(of: mainRepository)?.base == nil)
+    }
+
     private static func output(_ arguments: [String], in directory: URL) throws -> String {
         let process = Process()
         process.executableURL = Git.executableURL

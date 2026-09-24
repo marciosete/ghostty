@@ -137,7 +137,8 @@ struct SourceControlPanelView: View {
 // MARK: - Branch
 
 /// The branch line, as in VS Code's status bar: `main*  18↓ 1↑`. The `*` means there
-/// are uncommitted changes, and the counts are commits to pull and to push.
+/// are uncommitted changes, and the counts are commits to pull and to push. A worktree's
+/// branch without an upstream counts against the main checkout's branch instead.
 private struct SourceControlBranchView: View {
     let status: GitStatus
 
@@ -150,7 +151,7 @@ private struct SourceControlBranchView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            if status.upstream != nil && (status.ahead > 0 || status.behind > 0) {
+            if (status.upstream != nil || status.base != nil) && (status.ahead > 0 || status.behind > 0) {
                 Text("\(status.behind)↓ \(status.ahead)↑")
                     .monospacedDigit()
                     .padding(.leading, 6)
@@ -176,6 +177,8 @@ private struct SourceControlBranchView: View {
         if isDirty { lines.append("Uncommitted changes") }
         if let upstream = status.upstream {
             lines.append("\(status.behind) to pull, \(status.ahead) to push (\(upstream), as of the last fetch)")
+        } else if let base = status.base {
+            lines.append("\(status.behind) on \(base) not here yet, \(status.ahead) to land on \(base)")
         } else if status.branch != nil {
             lines.append("No upstream branch")
         }

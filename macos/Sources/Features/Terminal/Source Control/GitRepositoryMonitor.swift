@@ -92,8 +92,12 @@ final class GitRepositoryMonitor {
 
     private func startWatching() {
         var paths = [repository.root.path]
-        if !repository.gitDir.path.hasPrefix(repository.root.path + "/") {
-            // Worktrees and submodules keep their git directory elsewhere.
+        if repository.isLinkedWorktree {
+            // A worktree keeps its git directory inside the shared one, which holds the
+            // branches that its own and the main checkout's commits move.
+            paths.append(repository.commonDir.path)
+        } else if !repository.gitDir.path.hasPrefix(repository.root.path + "/") {
+            // Submodules keep their git directory elsewhere.
             paths.append(repository.gitDir.path)
         }
 
@@ -132,9 +136,18 @@ final class GitRepositoryMonitor {
 
     private func handleEvents<S: Sequence>(_ paths: S) where S.Element == String {
         let gitDir = repository.gitDir.path
+        let commonDir = repository.isLinkedWorktree ? repository.commonDir.path : nil
         let relevant = paths.contains { path in
-            // Anything in the working tree may change the status.
-            guard path == gitDir || path.hasPrefix(gitDir + "/") else { return true }
+            guard path == gitDir || path.hasPrefix(gitDir + "/") else {
+                // In a worktree's shared git directory, only the branches matter.
+                if let commonDir, path == commonDir || path.hasPrefix(commonDir + "/") {
+                    let name = path.dropFirst(commonDir.count + 1)
+                    return name == "packed-refs" || name.hasPrefix("refs/")
+                }
+
+                // Anything in the working tree may change the status.
+                return true
+            }
 
             // Inside the git directory, only the index (staging), HEAD and refs
             // (commits, branch switches) matter. Ignoring the rest (objects, logs,
