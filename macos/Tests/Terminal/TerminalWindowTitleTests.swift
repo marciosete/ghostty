@@ -42,4 +42,15 @@ struct TerminalWindowTitleTests {
         #expect(BaseTerminalController.withoutClaudeCodeStatus("Process Review") == "Process Review")
         #expect(BaseTerminalController.withoutClaudeCodeStatus("◑Process") == "◑Process")
     }
+
+    @Test func aRenamedSessionShowsClaudeCodeStatus() {
+        #expect(BaseTerminalController.claudeCodeStatus(of: "◐ Claude Code") == "◐")
+        #expect(BaseTerminalController.claudeCodeStatus(of: "~/projects") == nil)
+        #expect(BaseTerminalController.named("Hardening", claudeCodeStatus: "◐") == "◐ Hardening")
+        #expect(BaseTerminalController.named("Hardening", claudeCodeStatus: nil) == "Hardening")
+
+        // A name saved while Claude Code worked shows the current status, not the saved one.
+        #expect(BaseTerminalController.named("◑ Hardening", claudeCodeStatus: "✳") == "✳ Hardening")
+        #expect(BaseTerminalController.named("◑ Hardening", claudeCodeStatus: nil) == "Hardening")
+    }
 }

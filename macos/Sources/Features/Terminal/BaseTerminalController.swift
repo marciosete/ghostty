@@ -109,12 +109,17 @@ class BaseTerminalController: NSWindowController,
     /// The last computed title from the focused surface (without the override).
     private var lastComputedTitle: String = "👻"
 
+    /// The status Claude Code puts in front of the focused surface's title, if it runs there.
+    private var lastClaudeCodeStatus: String?
+
     /// The session's title: the user's override, or the focused surface's title. A
     /// terminal window's title adds its group in front of it, so tabs, the sidebar and
     /// scripts show this instead.
     var sessionTitle: String {
         guard let titleOverride else { return lastComputedTitle }
-        return computeTitle(title: titleOverride, bell: focusedSurface?.bell ?? false)
+        return computeTitle(
+            title: Self.named(titleOverride, claudeCodeStatus: lastClaudeCodeStatus),
+            bell: focusedSurface?.bell ?? false)
     }
 
     /// What renaming the session starts from. Claude Code puts its status in front of its
@@ -124,11 +129,24 @@ class BaseTerminalController: NSWindowController,
         Self.withoutClaudeCodeStatus(titleOverride ?? sessionTitle)
     }
 
+    private static let claudeCodeStatuses = ["◐", "◑", "◒", "◓", "✳"]
+
+    /// The status Claude Code put in front of `title`, if it did.
+    static func claudeCodeStatus(of title: String) -> String? {
+        claudeCodeStatuses.first { title.hasPrefix($0 + " ") }
+    }
+
     static func withoutClaudeCodeStatus(_ title: String) -> String {
-        for status in ["◐", "◑", "◒", "◓", "✳"] where title.hasPrefix(status + " ") {
-            return String(title.dropFirst(status.count + 1))
-        }
-        return title
+        guard let status = claudeCodeStatus(of: title) else { return title }
+        return String(title.dropFirst(status.count + 1))
+    }
+
+    /// A session's name with Claude Code's current status in front, as Claude Code shows
+    /// it in its own title. A name saved with a status in it shows the current one instead.
+    static func named(_ name: String, claudeCodeStatus status: String?) -> String {
+        let name = withoutClaudeCodeStatus(name)
+        guard let status else { return name }
+        return "\(status) \(name)"
     }
 
     /// The time that undo/redo operations that contain running ptys are valid for.
@@ -912,11 +930,15 @@ class BaseTerminalController: NSWindowController,
             // If we have a surface, we want to listen for title changes.
             titleSurface.$title
                 .combineLatest(titleSurface.$bell)
-                .map { [weak self] in self?.computeTitle(title: $0, bell: $1) ?? "" }
-                .sink { [weak self] in self?.titleDidChange(to: $0) }
+                .sink { [weak self] title, bell in
+                    guard let self else { return }
+                    self.lastClaudeCodeStatus = Self.claudeCodeStatus(of: title)
+                    self.titleDidChange(to: self.computeTitle(title: title, bell: bell))
+                }
                 .store(in: &focusedSurfaceCancellables)
         } else {
             // There is no surface to listen to titles for.
+            lastClaudeCodeStatus = nil
             titleDidChange(to: "👻")
         }
     }
