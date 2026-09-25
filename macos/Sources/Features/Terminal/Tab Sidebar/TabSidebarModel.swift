@@ -658,6 +658,77 @@ final class TabSidebarModel: ObservableObject {
         apply(order: groupedOrder(order), select: window)
     }
 
+    /// Where a dragged group is dropped.
+    enum GroupDestination {
+        /// Next to a tab, or next to the whole group it is in.
+        case tab(TerminalWindow)
+
+        /// Next to another group.
+        case group(UUID)
+
+        /// After every tab.
+        case end
+    }
+
+    /// Moves every tab of a group together, before or after `destination`. The tabs
+    /// keep their order and their group.
+    func moveGroup(_ groupID: UUID, to destination: GroupDestination, after: Bool) {
+        guard let hostWindow, let tabGroup = hostWindow.tabGroup else { return }
+        guard let order = Self.order(
+            tabGroup.windows,
+            movingGroup: groupID,
+            to: destination,
+            after: after) else { return }
+        apply(order: order, select: nil)
+    }
+
+    /// `windows` with the tabs of group `groupID` moved to `destination`, or nil when
+    /// the move makes no sense, such as next to one of its own tabs.
+    static func order(
+        _ windows: [NSWindow],
+        movingGroup groupID: UUID,
+        to destination: GroupDestination,
+        after: Bool
+    ) -> [NSWindow]? {
+        func group(of window: NSWindow) -> UUID? { (window as? TerminalWindow)?.userTabGroupID }
+
+        let members = windows.filter { group(of: $0) == groupID }
+        guard !members.isEmpty else { return nil }
+        let others = windows.filter { group(of: $0) != groupID }
+
+        // A tab in a group stands for its whole group: the group moves past all of it.
+        let anchors: [NSWindow]
+        switch destination {
+        case .tab(let target):
+            guard group(of: target) != groupID else { return nil }
+            if let targetGroup = group(of: target) {
+                anchors = others.filter { group(of: $0) == targetGroup }
+            } else {
+                anchors = [target]
+            }
+        case .group(let targetID):
+            guard targetID != groupID else { return nil }
+            anchors = others.filter { group(of: $0) == targetID }
+        case .end:
+            anchors = []
+        }
+
+        let index: Int
+        if anchors.isEmpty {
+            index = others.count
+        } else if after {
+            guard let last = anchors.last, let position = others.firstIndex(of: last) else { return nil }
+            index = position + 1
+        } else {
+            guard let first = anchors.first, let position = others.firstIndex(of: first) else { return nil }
+            index = position
+        }
+
+        var order = others
+        order.insert(contentsOf: members, at: index)
+        return order
+    }
+
     /// Makes sure the members of every group are next to each other in the tab order.
     /// A group is placed where its first member is.
     func normalizeOrder() {

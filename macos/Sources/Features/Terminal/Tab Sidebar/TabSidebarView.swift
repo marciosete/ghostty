@@ -329,10 +329,19 @@ private struct TabSidebarGroupHeader: View {
             withAnimation(.easeOut(duration: 0.15)) { model.toggleCollapsed(group.id) }
         }
         .overlay {
-            if placement != nil {
+            if placement != nil && !TabSidebarDragState.shared.isDraggingGroup {
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(Color.accentColor, lineWidth: 2)
             }
+        }
+        .overlay(alignment: placement == .after ? .bottom : .top) {
+            if placement != nil && TabSidebarDragState.shared.isDraggingGroup {
+                TabSidebarDropIndicator()
+            }
+        }
+        // Dragging the header moves the group with all its sessions.
+        .onDrag {
+            NSItemProvider(object: TabSidebarDragState.shared.begin(group: group.id) as NSString)
         }
         .onDrop(of: [.plainText], delegate: TabSidebarDropDelegate(
             model: model,
@@ -1002,21 +1011,47 @@ enum TabSidebarDropPlacement {
 final class TabSidebarDragState {
     static let shared = TabSidebarDragState()
 
+    /// What is dragged: a tab, or a group with all its tabs.
+    enum Payload {
+        case tab(TerminalWindow)
+        case group(UUID)
+    }
+
     private(set) weak var window: TerminalWindow?
+    private(set) var groupID: UUID?
     private var token: String?
 
+    /// Whether anything that can be dropped is being dragged.
+    var isDragging: Bool { window != nil || groupID != nil }
+
+    var isDraggingGroup: Bool { groupID != nil }
+
     func begin(_ window: TerminalWindow) -> String {
+        begin { $0.window = window }
+    }
+
+    func begin(group groupID: UUID) -> String {
+        begin { $0.groupID = groupID }
+    }
+
+    private func begin(_ set: (TabSidebarDragState) -> Void) -> String {
         let token = "ghostty-tab:\(UUID().uuidString)"
-        self.window = window
+        window = nil
+        groupID = nil
+        set(self)
         self.token = token
         return token
     }
 
-    func take(token: String) -> TerminalWindow? {
+    func take(token: String) -> Payload? {
         guard token == self.token else { return nil }
         self.token = nil
-        defer { self.window = nil }
-        return window
+        defer {
+            window = nil
+            groupID = nil
+        }
+        if let groupID { return .group(groupID) }
+        return window.map(Payload.tab)
     }
 }
 
@@ -1033,7 +1068,7 @@ private struct TabSidebarDropDelegate: DropDelegate {
     @Binding var placement: TabSidebarDropPlacement?
 
     func validateDrop(info: DropInfo) -> Bool {
-        TabSidebarDragState.shared.window != nil && info.hasItemsConforming(to: [.plainText])
+        TabSidebarDragState.shared.isDragging && info.hasItemsConforming(to: [.plainText])
     }
 
     func dropEntered(info: DropInfo) {
@@ -1059,15 +1094,23 @@ private struct TabSidebarDropDelegate: DropDelegate {
         _ = provider.loadObject(ofClass: NSString.self) { object, _ in
             guard let token = object as? String else { return }
             DispatchQueue.main.async {
-                guard let window = TabSidebarDragState.shared.take(token: token) else { return }
-                switch target {
-                case .tab(let targetWindow):
+                switch (TabSidebarDragState.shared.take(token: token), target) {
+                case (nil, _):
+                    return
+                case (.tab(let window), .tab(let targetWindow)):
                     guard let targetWindow else { return }
                     model.drop(window, relativeTo: targetWindow, after: finalPlacement == .after)
-                case .group(let groupID):
+                case (.tab(let window), .group(let groupID)):
                     model.drop(window, ontoGroup: groupID)
-                case .end:
+                case (.tab(let window), .end):
                     model.dropAtEnd(window)
+                case (.group(let groupID), .tab(let targetWindow)):
+                    guard let targetWindow else { return }
+                    model.moveGroup(groupID, to: .tab(targetWindow), after: finalPlacement == .after)
+                case (.group(let groupID), .group(let targetID)):
+                    model.moveGroup(groupID, to: .group(targetID), after: finalPlacement == .after)
+                case (.group(let groupID), .end):
+                    model.moveGroup(groupID, to: .end, after: false)
                 }
             }
         }
@@ -1079,7 +1122,11 @@ private struct TabSidebarDropDelegate: DropDelegate {
         switch target {
         case .tab:
             return info.location.y < height / 2 ? .before : .after
-        case .group, .end:
+        case .group:
+            // A tab dropped on a group joins it; a group goes above or below it.
+            guard TabSidebarDragState.shared.isDraggingGroup else { return .before }
+            return info.location.y < height / 2 ? .before : .after
+        case .end:
             return .before
         }
     }
