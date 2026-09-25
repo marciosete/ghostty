@@ -230,6 +230,19 @@ private struct TabSidebarGroupHeader: View {
 
             Spacer(minLength: 0)
 
+            // A collapsed group still says what its sessions are doing.
+            if group.isCollapsed && !(isHovering && !isEditing) {
+                if section.hasFinishedUnseen {
+                    TabSidebarUnseenDot()
+                }
+                if let light = section.claudeCodeLight, let color = light.tabColor.displayColor {
+                    Circle()
+                        .fill(Color(nsColor: color))
+                        .frame(width: 8, height: 8)
+                        .help(light.label)
+                }
+            }
+
             if isHovering && !isEditing {
                 Button {
                     model.newTab(inGroup: group.id)
@@ -320,8 +333,21 @@ private struct TabSidebarTabRow: View {
 
     private static let height = TabSidebarStyle.rowHeight
 
+    @ObservedObject private var modifiers = TabSidebarModifierMonitor.shared
+
     private var isEditing: Bool { model.editingTabID == tab.id }
     private var tabColor: NSColor? { tab.color.displayColor }
+    private var finishedUnseen: Bool { tab.claudeCodeActivity.finishedUnseen && !tab.isSelected }
+
+    /// Shortcut labels only show while their modifiers are held, like the menu bar's.
+    private var showsShortcut: Bool {
+        guard let jump = model.jumpModifiers, !jump.isEmpty else { return false }
+        return modifiers.held == jump
+    }
+
+    private var recedes: Bool {
+        tab.claudeCodeState?.light == .working && !tab.isSelected && !isHovering
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -342,22 +368,17 @@ private struct TabSidebarTabRow: View {
                         if !focused && isEditing { model.commitEditing() }
                     }
             } else {
+                if finishedUnseen {
+                    TabSidebarUnseenDot()
+                }
+
                 Text(tab.title)
+                    .fontWeight(finishedUnseen ? .semibold : nil)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
 
             Spacer(minLength: 0)
-
-            if let badge = tab.claudeCodeState?.badge {
-                Text("\(badge)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .monospacedDigit()
-                    .padding(.horizontal, 5)
-                    .frame(minWidth: 16, minHeight: 16)
-                    .background(Capsule().fill(foreground.opacity(0.18)))
-                    .help(tab.claudeCodeState?.badgeHelp ?? "")
-            }
 
             if isHovering && !isEditing {
                 Button {
@@ -371,10 +392,14 @@ private struct TabSidebarTabRow: View {
                 .buttonStyle(.plain)
                 .opacity(0.8)
                 .help("Close Session")
-            } else if let keyEquivalent = tab.keyEquivalent {
+            } else if showsShortcut, let keyEquivalent = tab.keyEquivalent {
                 Text(keyEquivalent)
-                    .font(.system(size: 11))
-                    .opacity(0.6)
+                    .font(.system(size: 10, weight: .medium))
+                    .padding(.horizontal, 5)
+                    .frame(minHeight: 16)
+                    .background(Capsule().fill(foreground.opacity(0.18)))
+            } else if let state = tab.claudeCodeState {
+                TabSidebarClaudeCodeStatus(state: state, activity: tab.claudeCodeActivity)
             }
         }
         .font(tab.isSelected ? TabSidebarStyle.titleFont.weight(.semibold) : TabSidebarStyle.titleFont)
@@ -382,6 +407,10 @@ private struct TabSidebarTabRow: View {
         .padding(.horizontal, 8)
         .frame(height: Self.height)
         .background(RoundedRectangle(cornerRadius: 6).fill(background))
+        // A session that is working needs nothing yet, so it steps back and the ones
+        // waiting for an answer or finished stand out.
+        .opacity(recedes ? 0.7 : 1)
+        .animation(.easeOut(duration: 0.15), value: recedes)
         .overlay {
             if tab.isSelected && tabColor == nil {
                 RoundedRectangle(cornerRadius: 6)
@@ -522,6 +551,115 @@ private struct TabSidebarColorMenu: View {
                 }
             }
         }
+    }
+}
+
+/// Marks a session that finished while it wasn't looked at, like an unread message. It
+/// takes the text's color, since the accent color could be read as a light.
+private struct TabSidebarUnseenDot: View {
+    var body: some View {
+        Circle()
+            .frame(width: 6, height: 6)
+            .help("Finished while you were away")
+    }
+}
+
+/// What a session's Claude Code is doing, as a symbol and a few characters, so it reads
+/// without telling the row's colors apart: how long it has been working, that it waits
+/// for an answer, how many files or commits are left, or how long ago it finished.
+private struct TabSidebarClaudeCodeStatus: View {
+    let state: ClaudeCodeTabState
+    let activity: ClaudeCodeActivity
+
+    var body: some View {
+        // Only a working session counts seconds.
+        TimelineView(.periodic(from: .now, by: state.light == .working ? 1 : 30)) { context in
+            HStack(spacing: 3) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                if let text = text(at: context.date) {
+                    Text(text)
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                }
+            }
+            .opacity(0.85)
+            .help(help(at: context.date))
+        }
+    }
+
+    private var symbol: String {
+        switch state.light {
+        case .working: return "circle.dashed"
+        case .waiting: return "exclamationmark.bubble"
+        case .pending: return "pencil"
+        case .unlanded: return "arrow.triangle.merge"
+        case .clean: return "checkmark"
+        }
+    }
+
+    private func text(at now: Date) -> String? {
+        switch state.light {
+        case .working:
+            return activity.workingSince.map { ClaudeCodeActivity.elapsed(since: $0, at: now) }
+        case .waiting:
+            return nil
+        case .pending, .unlanded:
+            return state.badge.map(String.init)
+        case .clean:
+            return activity.stoppedSince.map { ClaudeCodeActivity.ago($0, at: now) }
+        }
+    }
+
+    private func help(at now: Date) -> String {
+        var parts = [state.badgeHelp ?? state.light.label]
+        if state.light == .working, let start = activity.workingSince {
+            parts.append("for \(ClaudeCodeActivity.elapsed(since: start, at: now))")
+        } else if let stopped = activity.stoppedSince {
+            let ago = ClaudeCodeActivity.ago(stopped, at: now)
+            parts.append(ago == "now" ? "just now" : "since \(ago) ago")
+        }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// The modifier keys held down, once they have been held for a moment, so shortcut
+/// labels don't flash while a shortcut is typed.
+final class TabSidebarModifierMonitor: ObservableObject {
+    static let shared = TabSidebarModifierMonitor()
+
+    private static let delay: TimeInterval = 0.2
+
+    @Published private(set) var held: NSEvent.ModifierFlags = []
+
+    private var monitor: Any?
+    private var resignObserver: NSObjectProtocol?
+    private var pending: DispatchWorkItem?
+
+    private init() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            self?.update(event.modifierFlags)
+            return event
+        }
+
+        // Modifiers released in another app are never seen.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in self?.update([]) }
+    }
+
+    private func update(_ flags: NSEvent.ModifierFlags) {
+        let flags = flags.intersection([.command, .option, .control, .shift])
+        pending?.cancel()
+        pending = nil
+        if !held.isEmpty { held = [] }
+        guard !flags.isEmpty else { return }
+
+        let item = DispatchWorkItem { [weak self] in self?.held = flags }
+        pending = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay, execute: item)
     }
 }
 

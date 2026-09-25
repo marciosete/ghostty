@@ -30,6 +30,9 @@ final class TabSidebarModel: ObservableObject {
 
         /// For an `auto` tab, what its Claude Code sessions are doing.
         let claudeCodeState: ClaudeCodeTabState?
+
+        /// When its Claude Code sessions changed what they were doing.
+        let claudeCodeActivity: ClaudeCodeActivity
         let keyEquivalent: String?
         let isSelected: Bool
         let isZoomed: Bool
@@ -42,6 +45,7 @@ final class TabSidebarModel: ObservableObject {
                 lhs.color == rhs.color &&
                 lhs.assignedColor == rhs.assignedColor &&
                 lhs.claudeCodeState == rhs.claudeCodeState &&
+                lhs.claudeCodeActivity == rhs.claudeCodeActivity &&
                 lhs.keyEquivalent == rhs.keyEquivalent &&
                 lhs.isSelected == rhs.isSelected &&
                 lhs.isZoomed == rhs.isZoomed &&
@@ -58,6 +62,15 @@ final class TabSidebarModel: ObservableObject {
         var id: String { "\(group.id)-\(tabs.first?.index ?? 0)" }
 
         var containsSelectedTab: Bool { tabs.contains(where: \.isSelected) }
+
+        /// What the members' Claude Code sessions are doing, shown on the header while
+        /// the group is collapsed: the one that needs attention most.
+        var claudeCodeLight: ClaudeCodeLight? {
+            ClaudeCodeLight.mostUrgent(tabs.compactMap { $0.claudeCodeState?.light })
+        }
+
+        /// A member finished a request that hasn't been looked at.
+        var hasFinishedUnseen: Bool { tabs.contains { $0.claudeCodeActivity.finishedUnseen } }
     }
 
     enum Row: Identifiable, Equatable {
@@ -87,6 +100,10 @@ final class TabSidebarModel: ObservableObject {
     /// The color to paint the titlebar area above the terminal when the sidebar is active,
     /// since the titlebar itself is made transparent so the sidebar can extend under it.
     @Published var titlebarColor: NSColor?
+
+    /// The modifiers of the `goto_tab` shortcuts. The shortcut labels show while exactly
+    /// these are held.
+    @Published private(set) var jumpModifiers: NSEvent.ModifierFlags?
 
     /// The height of the titlebar that the sidebar and terminal content extend under.
     @Published var titlebarHeight: CGFloat = 0
@@ -167,6 +184,7 @@ final class TabSidebarModel: ObservableObject {
                 color: window.shownTabColor,
                 assignedColor: window.tabColor,
                 claudeCodeState: window.claudeCodeState,
+                claudeCodeActivity: window.claudeCodeActivity,
                 keyEquivalent: window.keyEquivalent.flatMap { $0.isEmpty ? nil : $0 },
                 isSelected: window === selected,
                 isZoomed: window.surfaceIsZoomed,
@@ -190,6 +208,13 @@ final class TabSidebarModel: ObservableObject {
         }
 
         if newRows != rows { rows = newRows }
+
+        // Refreshes run on the main loop.
+        let jump = MainActor.assumeIsolated {
+            hostWindow.terminalController?.ghostty.config.keyboardShortcut(for: "goto_tab:1")
+                .map { NSEvent.ModifierFlags(swiftUIFlags: $0.modifiers) }
+        }
+        if jump != jumpModifiers { jumpModifiers = jump }
 
         // If the tab order was changed outside of the sidebar (e.g. "Merge All Windows"
         // or a move_tab keybind), a group can end up split. Put it back together. Only

@@ -32,6 +32,17 @@ enum ClaudeCodeLight: CaseIterable {
         }
     }
 
+    /// Says what the light means.
+    var label: String {
+        switch self {
+        case .working: return "Working"
+        case .pending: return "Changes not committed"
+        case .unlanded: return "Commits not landed"
+        case .waiting: return "Waiting for you"
+        case .clean: return "Done"
+        }
+    }
+
     /// A tab with several sessions shows the one that needs attention most.
     private var urgency: Int {
         switch self {
@@ -142,6 +153,78 @@ struct ClaudeCodeTabState: Equatable {
     var landingBranch: String? {
         let branches = Set(worktrees.compactMap(\.baseBranch))
         return branches.count == 1 ? branches.first : nil
+    }
+}
+
+/// When the Claude Code sessions of a tab last changed what they were doing, and whether
+/// they finished while nobody was looking at the tab. Kept by the tab as its light
+/// changes, since the registry only says what a session is doing now.
+struct ClaudeCodeActivity: Equatable {
+    /// When the current request started. A question asked in the middle of a request
+    /// doesn't restart it.
+    private(set) var workingSince: Date?
+
+    /// When the sessions stopped working or started waiting for an answer. Unknown for a
+    /// session first seen already stopped.
+    private(set) var stoppedSince: Date?
+
+    /// The sessions finished a request while the tab wasn't being looked at, and it hasn't
+    /// been looked at since.
+    private(set) var finishedUnseen = false
+
+    /// Follows the tab's light changing from `old` to `new` at `now`. `seen` says whether
+    /// the tab is being looked at.
+    mutating func update(from old: ClaudeCodeLight?, to new: ClaudeCodeLight?, at now: Date, seen: Bool) {
+        guard let new else {
+            self = ClaudeCodeActivity()
+            return
+        }
+        guard let old else {
+            // First seen: when it got here isn't known.
+            workingSince = new == .working ? now : nil
+            return
+        }
+
+        switch new {
+        case .working:
+            let continues = old == .working || (old == .waiting && workingSince != nil)
+            if !continues { workingSince = now }
+            stoppedSince = nil
+            finishedUnseen = false
+
+        case .waiting:
+            if old != .waiting { stoppedSince = now }
+
+        case .pending, .unlanded, .clean:
+            guard old == .working || old == .waiting else { return }
+            workingSince = nil
+            stoppedSince = now
+            finishedUnseen = !seen
+        }
+    }
+
+    /// The tab is being looked at.
+    mutating func markSeen() {
+        finishedUnseen = false
+    }
+
+    /// How long a request has been working, to the second while it is short: "12s",
+    /// "4m", "1h 5m".
+    static func elapsed(since start: Date, at now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        return minutes % 60 == 0 ? "\(minutes / 60)h" : "\(minutes / 60)h \(minutes % 60)m"
+    }
+
+    /// How long ago something happened, in its largest unit: "now", "4m", "3h", "2d".
+    static func ago(_ date: Date, at now: Date) -> String {
+        let minutes = max(0, Int(now.timeIntervalSince(date))) / 60
+        if minutes < 1 { return "now" }
+        if minutes < 60 { return "\(minutes)m" }
+        if minutes < 60 * 24 { return "\(minutes / 60)h" }
+        return "\(minutes / (60 * 24))d"
     }
 }
 

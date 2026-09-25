@@ -74,8 +74,29 @@ class TerminalWindow: NSWindow {
     var claudeCodeState: ClaudeCodeTabState? {
         didSet {
             guard claudeCodeState != oldValue else { return }
+            claudeCodeActivity.update(
+                from: oldValue?.light,
+                to: claudeCodeState?.light,
+                at: Date(),
+                seen: isLookedAt)
             shownTabColorDidChange()
         }
+    }
+
+    /// When this tab's Claude Code sessions changed what they were doing, and whether they
+    /// finished while the tab wasn't looked at.
+    private(set) var claudeCodeActivity = ClaudeCodeActivity()
+
+    /// The tab is the one shown in its window, and the app is in front.
+    private var isLookedAt: Bool {
+        NSApp.isActive && isVisible && (tabGroup?.selectedWindow ?? self) === self
+    }
+
+    /// Clears the finished mark once the tab is looked at.
+    private func markClaudeCodeActivitySeen() {
+        guard claudeCodeActivity.finishedUnseen, isLookedAt else { return }
+        claudeCodeActivity.markSeen()
+        postTabSidebarItemDidChange()
     }
 
     /// The color the tab is shown in: the one assigned to it, or for `auto`, the color of
@@ -257,6 +278,7 @@ class TerminalWindow: NSWindow {
     override func becomeKey() {
         super.becomeKey()
         resetZoomTabButton.contentTintColor = .controlAccentColor
+        markClaudeCodeActivitySeen()
     }
 
     override func resignKey() {
