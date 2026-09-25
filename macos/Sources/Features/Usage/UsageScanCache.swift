@@ -34,7 +34,8 @@ struct UsageCachedTranscript: Equatable {
 enum UsageScanCache {
     /// Version 2 added one hour cache writes. An older cache is dropped and every
     /// transcript read again, so cache writes are priced by the cache they went to.
-    private static let version = 2
+    /// Version 3 dropped the `<synthetic>` messages Claude Code writes itself.
+    private static let version = 3
 
     /// Keeps only the first record of each key, within one file. Callers stitching a
     /// resumed parse together pass one `seen` set across its parts.

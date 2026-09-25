@@ -66,13 +66,19 @@ enum UsageTranscripts {
     /// Claude Code writes one line per content block of an assistant message, and every
     /// one of them repeats the message's complete `usage`. Summing them overcounts, so
     /// callers must keep only the first record of each `dedupeKey`.
+    /// The model Claude Code names on messages it writes itself.
+    static let syntheticModel = "<synthetic>"
+
     static func parseClaudeLine(_ line: Data) -> UsageRecord? {
         guard let record = UsageJSON.object(line),
               record["type"] as? String == "assistant",
               let message = record["message"] as? [String: Any],
               let usage = message["usage"] as? [String: Any],
               let timestampMs = UsageTimestamp.milliseconds(record["timestamp"]),
-              let model = message["model"] as? String, !model.isEmpty
+              let model = message["model"] as? String, !model.isEmpty,
+              // Messages Claude Code writes itself, such as an API error or "Request
+              // interrupted by user", never reached a model and used nothing.
+              model != syntheticModel
         else { return nil }
 
         // Matches ccusage: prefer the message and request pair, falling back to whichever

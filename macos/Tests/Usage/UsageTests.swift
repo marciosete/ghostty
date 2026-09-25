@@ -34,7 +34,7 @@ struct UsageTimestampTests {
 // MARK: - Claude Code
 
 struct UsageClaudeParserTests {
-    private func line(messageId: String, contentType: String) -> Data {
+    private func line(messageId: String, contentType: String, model: String = "claude-fable-5") -> Data {
         json([
             "type": "assistant",
             "timestamp": "2026-08-07T04:05:13.944Z",
@@ -42,7 +42,7 @@ struct UsageClaudeParserTests {
             "message": [
                 "id": messageId,
                 "role": "assistant",
-                "model": "claude-fable-5",
+                "model": model,
                 "content": [["type": contentType]],
                 "usage": [
                     "input_tokens": 2,
@@ -52,6 +52,10 @@ struct UsageClaudeParserTests {
                 ],
             ],
         ])
+    }
+
+    @Test func skipsMessagesClaudeCodeWroteItself() {
+        #expect(UsageTranscripts.parseClaudeLine(line(messageId: "msg_1", contentType: "text", model: "<synthetic>")) == nil)
     }
 
     @Test func extractsTotalsAndDedupeKey() throws {
