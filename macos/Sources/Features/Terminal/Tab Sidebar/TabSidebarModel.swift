@@ -127,6 +127,18 @@ final class TabSidebarModel: ObservableObject {
     /// The text typed so far while renaming a tab or group inline.
     @Published var editingDraft = ""
 
+    /// What is typed in the search field. The sidebar shows only the sessions matching it.
+    @Published var searchQuery = "" {
+        didSet { if searchQuery != oldValue { searchHighlight = nil } }
+    }
+
+    /// The session the arrow keys moved to while searching, which Return opens. Nil for
+    /// the first match.
+    @Published private(set) var searchHighlight: ObjectIdentifier?
+
+    /// Changed to put the keyboard in the search field.
+    @Published private(set) var searchFocusRequest = 0
+
     private weak var hostWindow: TerminalWindow?
 
     /// The window showing this sidebar.
@@ -260,6 +272,53 @@ final class TabSidebarModel: ObservableObject {
                 DispatchQueue.main.async { [weak self] in self?.normalizeOrder() }
             }
         }
+    }
+
+    // MARK: Search
+
+    var isSearching: Bool { !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// The rows to show: all of them, or those matching the search.
+    var shownRows: [Row] {
+        TabSidebarSearch.filter(rows, query: searchQuery, infos: infos)
+    }
+
+    /// The session Return opens while searching.
+    var highlightedTab: Tab? {
+        guard isSearching else { return nil }
+        let tabs = TabSidebarSearch.tabs(in: shownRows)
+        return tabs.first { $0.id == searchHighlight } ?? tabs.first
+    }
+
+    func focusSearch() {
+        searchFocusRequest += 1
+    }
+
+    /// Moves the highlight `offset` matches down, or up when negative.
+    func moveSearchHighlight(by offset: Int) {
+        let tabs = TabSidebarSearch.tabs(in: shownRows)
+        guard !tabs.isEmpty else { return }
+        let current = tabs.firstIndex { $0.id == highlightedTab?.id } ?? 0
+        searchHighlight = tabs[min(max(current + offset, 0), tabs.count - 1)].id
+    }
+
+    /// Opens the highlighted session and ends the search.
+    func openSearchHighlight() {
+        guard let window = highlightedTab?.window else { return }
+        searchQuery = ""
+        select(window)
+        focusTerminal(of: window)
+    }
+
+    /// Clears the search and gives the keyboard back to the terminal.
+    func endSearch() {
+        searchQuery = ""
+        if let hostWindow { focusTerminal(of: hostWindow) }
+    }
+
+    private func focusTerminal(of window: TerminalWindow) {
+        guard let surface = window.terminalController?.focusedSurface else { return }
+        window.makeFirstResponder(surface)
     }
 
     // MARK: Info

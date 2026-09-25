@@ -33,11 +33,19 @@ extension AppDelegate {
         toggleUsage.keyEquivalentModifierMask = [.command]
         toggleUsage.setImageIfDesired(systemSymbolName: "chart.line.uptrend.xyaxis")
 
+        let searchSessions = NSMenuItem(
+            title: "Search Sessions",
+            action: #selector(TerminalController.searchSessions(_:)),
+            keyEquivalent: "o")
+        searchSessions.keyEquivalentModifierMask = [.command, .shift]
+        searchSessions.setImageIfDesired(systemSymbolName: "magnifyingglass")
+
         viewMenu.insertItem(toggleSidebar, at: 0)
         viewMenu.insertItem(verticalTabs, at: 1)
-        viewMenu.insertItem(toggleSourceControl, at: 2)
-        viewMenu.insertItem(toggleUsage, at: 3)
-        viewMenu.insertItem(.separator(), at: 4)
+        viewMenu.insertItem(searchSessions, at: 2)
+        viewMenu.insertItem(toggleSourceControl, at: 3)
+        viewMenu.insertItem(toggleUsage, at: 4)
+        viewMenu.insertItem(.separator(), at: 5)
 
         let captureSystemPrompts = NSMenuItem(
             title: "Capture Claude Code System Prompts",
@@ -48,9 +56,9 @@ extension AppDelegate {
             action: #selector(AppDelegate.showCapturedSystemPrompts(_:)),
             keyEquivalent: "")
 
-        viewMenu.insertItem(captureSystemPrompts, at: 5)
-        viewMenu.insertItem(showSystemPrompts, at: 6)
-        viewMenu.insertItem(.separator(), at: 7)
+        viewMenu.insertItem(captureSystemPrompts, at: 6)
+        viewMenu.insertItem(showSystemPrompts, at: 7)
+        viewMenu.insertItem(.separator(), at: 8)
     }
 
     /// Takes effect in terminals opened afterwards.

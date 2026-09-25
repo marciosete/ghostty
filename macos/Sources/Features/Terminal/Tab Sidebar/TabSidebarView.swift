@@ -92,9 +92,21 @@ struct TabSidebarView: View {
             // Leave room for the traffic lights and the titlebar.
             Color.clear.frame(height: max(topInset, 8))
 
+            TabSidebarSearchField(model: model)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: TabSidebarStyle.rowSpacing(settings.rowStyle)) {
-                    ForEach(model.rows) { row in
+                    if model.isSearching && model.shownRows.isEmpty {
+                        Text("No sessions match")
+                            .font(TabSidebarStyle.titleFont)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 12)
+                    }
+
+                    ForEach(model.shownRows) { row in
                         switch row {
                         case .tab(let tab):
                             TabSidebarTabRow(model: model, tab: tab, group: nil)
@@ -165,6 +177,55 @@ struct TabSidebarView: View {
                     }
                     .onEnded { _ in resizeStartWidth = nil }
             )
+    }
+}
+
+// MARK: - Search
+
+/// Finds sessions by title, group, project, branch or folder. The arrow keys move through
+/// the matches, Return opens one, and Escape clears the search.
+private struct TabSidebarSearchField: View {
+    @ObservedObject var model: TabSidebarModel
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            TextField("Search", text: $model.searchQuery)
+                .textFieldStyle(.plain)
+                .font(TabSidebarStyle.titleFont)
+                .focused($focused)
+                .onSubmit { model.openSearchHighlight() }
+                .onExitCommand { model.endSearch() }
+                .backport.onKeyPress(.downArrow) { _ in
+                    model.moveSearchHighlight(by: 1)
+                    return .handled
+                }
+                .backport.onKeyPress(.upArrow) { _ in
+                    model.moveSearchHighlight(by: -1)
+                    return .handled
+                }
+
+            if !model.searchQuery.isEmpty {
+                Button {
+                    model.endSearch()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Clear Search")
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(focused ? 0.1 : 0.06)))
+        .help("Search Sessions (⇧⌘O)")
+        .onChange(of: model.searchFocusRequest) { _ in focused = true }
     }
 }
 
@@ -340,6 +401,7 @@ private struct TabSidebarTabRow: View {
     private var cornerRadius: CGFloat { isExtended ? 8 : 6 }
     private var titleFont: Font { isExtended ? TabSidebarStyle.extendedTitleFont : TabSidebarStyle.titleFont }
     private var info: TabSidebarSessionInfo? { model.infos[tab.id] }
+    private var isSearchHighlight: Bool { model.highlightedTab?.id == tab.id }
 
     private var isEditing: Bool { model.editingTabID == tab.id }
     private var tabColor: NSColor? { tab.color.displayColor }
@@ -380,6 +442,12 @@ private struct TabSidebarTabRow: View {
             if tab.isSelected, let outline {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(outline, lineWidth: 1)
+            }
+        }
+        .overlay {
+            if isSearchHighlight {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
             }
         }
         .overlay(alignment: .leading) { groupMarker }

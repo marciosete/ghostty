@@ -1440,6 +1440,17 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         settings.isCollapsed.toggle()
     }
 
+    /// Shows the tab sidebar and puts the keyboard in its search field.
+    @IBAction func searchSessions(_ sender: Any?) {
+        let settings = TabSidebarSettings.shared
+        settings.isEnabled = true
+        settings.isCollapsed = false
+
+        // The sidebar may only now be shown, so its field is there a turn later.
+        guard let model = (window as? TerminalWindow)?.tabSidebarModel else { return }
+        DispatchQueue.main.async { model.focusSearch() }
+    }
+
     /// Switches between the vertical tab sidebar and the native tab bar.
     @IBAction func toggleVerticalTabs(_ sender: Any?) {
         TabSidebarSettings.shared.isEnabled.toggle()
@@ -1798,6 +1809,9 @@ extension TerminalController {
 
         case #selector(toggleVerticalTabs):
             item.state = TabSidebarSettings.shared.isEnabled ? .on : .off
+            return (window as? TerminalWindow)?.supportsTabSidebar ?? false
+
+        case #selector(searchSessions):
             return (window as? TerminalWindow)?.supportsTabSidebar ?? false
 
         case #selector(toggleSourceControl):
