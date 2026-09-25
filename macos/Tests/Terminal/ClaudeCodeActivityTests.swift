@@ -91,6 +91,40 @@ struct ClaudeCodeActivityTests {
         #expect(ClaudeCodeTabState(light: .clean).summary(ClaudeCodeActivity(), at: at(0)) == "Done")
     }
 
+    @Test func sessionUsageIsTalliedByModel() {
+        let rates = UsageRateTable(liteLLM: [
+            "claude-opus-5-5": ["input_cost_per_token": 0.001, "output_cost_per_token": 0.002],
+        ])
+        func record(_ model: String, input: Int, output: Int, key: String?, reported: Double? = nil) -> UsageRecord {
+            UsageRecord(
+                provider: .claude, timestampMs: 0, model: model, sessionId: "s",
+                totals: UsageTokenTotals(uncachedInput: input, output: output),
+                reportedCostUsd: reported, dedupeKey: key)
+        }
+        let usage = ClaudeCodeSessionCost.usage(of: [
+            record("claude-opus-5-5", input: 100, output: 10, key: "a"),
+            // The same message again, as Claude Code writes one line per content block.
+            record("claude-opus-5-5", input: 100, output: 10, key: "a"),
+            record("claude-opus-5-5", input: 200, output: 20, key: "b"),
+            record("claude-haiku-4-5", input: 1000, output: 0, key: "c"),
+            record("claude-sonnet-5", input: 10, output: 0, key: "d", reported: 0.05),
+        ], rates: rates)
+
+        #expect(usage.map(\.model) == ["claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"])
+        #expect(usage[0].tokens == 330)
+        #expect(abs((usage[0].cost ?? 0) - 0.36) < 1e-9)
+        #expect(usage[1].cost == 0.05)
+        // A model without a rate has no cost, rather than a cost of nothing.
+        #expect(usage[2].tokens == 1000)
+        #expect(usage[2].cost == nil)
+    }
+
+    @Test func modelNamesAreShortened() {
+        #expect(TabSidebarHoverCardView.shortName("claude-opus-5-5") == "opus-5-5")
+        #expect(TabSidebarHoverCardView.shortName("claude-haiku-4-5-20251001") == "haiku-4-5")
+        #expect(TabSidebarHoverCardView.shortName("gpt-5") == "gpt-5")
+    }
+
     @Test func elapsed() {
         #expect(ClaudeCodeActivity.elapsed(since: start, at: at(12)) == "12s")
         #expect(ClaudeCodeActivity.elapsed(since: start, at: at(4 * 60 + 5)) == "4m")

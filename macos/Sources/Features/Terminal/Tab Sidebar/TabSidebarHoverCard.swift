@@ -71,7 +71,7 @@ final class TabSidebarHoverCard {
         let panel = self.panel ?? makePanel()
         self.panel = panel
 
-        let hosting = NSHostingView(rootView: TabSidebarHoverCardChrome { content })
+        let hosting = TabSidebarHoverCardHostingView(rootView: TabSidebarHoverCardChrome { content })
         panel.contentView = hosting
         let size = hosting.fittingSize
 
@@ -108,6 +108,21 @@ final class TabSidebarHoverCard {
     }
 }
 
+/// Resizes the card to its content as it changes, such as once the usage is added up,
+/// keeping its top edge where it is.
+private final class TabSidebarHoverCardHostingView<Content: View>: NSHostingView<Content> {
+    override func invalidateIntrinsicContentSize() {
+        super.invalidateIntrinsicContentSize()
+        guard let window else { return }
+        let size = fittingSize
+        var frame = window.frame
+        guard frame.size != size else { return }
+        frame.origin.y += frame.height - size.height
+        frame.size = size
+        window.setFrame(frame, display: true)
+    }
+}
+
 /// The card's rounded, translucent background.
 private struct TabSidebarHoverCardChrome<Content: View>: View {
     @ViewBuilder let content: () -> Content
@@ -135,14 +150,15 @@ private struct TabSidebarHoverCardBackground: NSViewRepresentable {
 }
 
 /// What the card says about a session: its title, what its Claude Code is doing, where it
-/// works, and what it has cost.
+/// works, and the tokens and cost of each model it used.
 struct TabSidebarHoverCardView: View {
     let tab: TabSidebarModel.Tab
     let info: TabSidebarSessionInfo?
     let tint: Color?
 
-    /// Nil while it is being added up, then the cost, if it could be priced.
-    @State private var cost: Double??
+    /// Nil while it is being added up.
+    @State private var usage: [ClaudeCodeSessionCost.ModelUsage]?
+    @State private var usageRead = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -166,19 +182,65 @@ struct TabSidebarHoverCardView: View {
                 if let session = info.claudeSessions.first {
                     row("sparkle", "Session \(session.id.uuidString.lowercased().prefix(8))")
                 }
-                // The row is there from the start, so the card doesn't grow under the
-                // pointer once the cost is added up.
                 if !info.claudeSessions.isEmpty {
-                    switch cost {
-                    case .none: row("dollarsign.circle", "Adding up the cost…")
-                    case .some(.none): row("dollarsign.circle", "Cost unknown until the usage panel loads rates")
-                    case .some(.some(let cost)): row("dollarsign.circle", Self.format(cost) + " so far")
+                    if let usage, !usage.isEmpty {
+                        usageTable(usage)
+                    } else {
+                        row("dollarsign.circle", usageRead ? "No usage yet" : "Adding up usage…")
                     }
                 }
             }
         }
         .font(.system(size: 12))
-        .onAppear(perform: loadCost)
+        .onAppear(perform: loadUsage)
+    }
+
+    /// A row per model, and their total when there are several.
+    private func usageTable(_ usage: [ClaudeCodeSessionCost.ModelUsage]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 3) {
+            GridRow {
+                Text("Model")
+                Text("Tokens").gridColumnAlignment(.trailing)
+                Text("Cost").gridColumnAlignment(.trailing)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.secondary)
+
+            ForEach(usage, id: \.model) { model in
+                GridRow {
+                    Text(Self.shortName(model.model))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(UsageFormat.tokens(model.tokens))
+                    Text(model.cost.map(UsageFormat.usd) ?? "–")
+                }
+            }
+
+            if usage.count > 1 {
+                Divider().gridCellColumns(3)
+                GridRow {
+                    Text("Total")
+                    Text(UsageFormat.tokens(usage.reduce(0) { $0 + $1.tokens }))
+                    // A model without a rate makes the total a floor.
+                    Text(UsageFormat.usd(usage.reduce(0) { $0 + ($1.cost ?? 0) })
+                        + (usage.contains { $0.cost == nil } ? "+" : ""))
+                }
+                .fontWeight(.semibold)
+            }
+        }
+        .monospacedDigit()
+        .foregroundStyle(.primary.opacity(0.85))
+        .padding(.top, 2)
+    }
+
+    /// The model's name without the `claude-` every one of them starts with, or the date
+    /// some end with.
+    static func shortName(_ model: String) -> String {
+        var name = model.hasPrefix("claude-") ? String(model.dropFirst("claude-".count)) : model
+        if let range = name.range(of: #"-\d{8}$"#, options: .regularExpression) {
+            name.removeSubrange(range)
+        }
+        return name
     }
 
     private func row(_ symbol: String, _ text: String, tint: Color? = nil, truncation: Text.TruncationMode = .tail) -> some View {
@@ -194,16 +256,11 @@ struct TabSidebarHoverCardView: View {
         }
     }
 
-    private func loadCost() {
+    private func loadUsage() {
         guard let sessions = info?.claudeSessions, !sessions.isEmpty else { return }
-        ClaudeCodeSessionCost.cost(of: sessions) { cost = .some($0) }
-    }
-
-    private static func format(_ cost: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "USD"
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: cost)) ?? String(format: "$%.2f", cost)
+        ClaudeCodeSessionCost.usage(of: sessions) { read in
+            usage = read
+            usageRead = true
+        }
     }
 }

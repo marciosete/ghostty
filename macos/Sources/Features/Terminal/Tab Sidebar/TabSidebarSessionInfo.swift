@@ -75,24 +75,31 @@ final class TabSidebarSessionInfoReader {
     }
 }
 
-/// What a Claude Code session has cost so far, priced like the usage panel prices it:
-/// with the rates the panel last downloaded.
+/// What a Claude Code session has used so far, by model: the tokens, and their cost priced
+/// like the usage panel prices it, with the rates the panel last downloaded.
 enum ClaudeCodeSessionCost {
+    struct ModelUsage: Equatable {
+        let model: String
+
+        /// Every token processed, cached or not.
+        var tokens: Int
+
+        /// Nil when the model has no rate.
+        var cost: Double?
+    }
+
     private static let queue = DispatchQueue(label: "com.mitchellh.ghostty.session-cost", qos: .utility)
 
     /// Only touched on `queue`.
     private static var rates: UsageRateTable?
 
-    /// Calls `completion` on the main thread with the cost of `sessions`, or nil when
-    /// none of them has a transcript or no rates were ever downloaded.
-    static func cost(of sessions: [ClaudeCodeSession], completion: @escaping (Double?) -> Void) {
+    /// Calls `completion` on the main thread with what `sessions` used, most costly model
+    /// first, or nil when none of them has a transcript.
+    static func usage(of sessions: [ClaudeCodeSession], completion: @escaping ([ModelUsage]?) -> Void) {
         queue.async {
             let transcripts = sessions.compactMap(\.transcript)
-            let rates = loadRates()
-            let cost: Double? = transcripts.isEmpty ? nil : transcripts.reduce(0) { total, url in
-                total + cost(of: url, rates: rates)
-            }
-            DispatchQueue.main.async { completion(rates.count > 0 ? cost : nil) }
+            let usage = transcripts.isEmpty ? nil : usage(of: transcripts, rates: loadRates())
+            DispatchQueue.main.async { completion(usage) }
         }
     }
 
@@ -106,18 +113,32 @@ enum ClaudeCodeSessionCost {
         return table
     }
 
-    private static func cost(of transcript: URL, rates: UsageRateTable) -> Double {
-        guard let result = UsageTranscriptReader.read(path: transcript.path, provider: .claude) else { return 0 }
-        var seen = Set<String>()
-        var total = 0.0
-        for record in result.records + result.tailRecords {
-            if let key = record.dedupeKey, !seen.insert(key).inserted { continue }
-            if let reported = record.reportedCostUsd {
-                total += reported
-            } else if let rate = rates.rate(for: record.model) {
-                total += rate.cost(of: record.totals)
-            }
+    static func usage(of transcripts: [URL], rates: UsageRateTable) -> [ModelUsage] {
+        let records = transcripts.flatMap { url -> [UsageRecord] in
+            guard let result = UsageTranscriptReader.read(path: url.path, provider: .claude) else { return [] }
+            return result.records + result.tailRecords
         }
-        return total
+        return usage(of: records, rates: rates)
+    }
+
+    static func usage(of records: [UsageRecord], rates: UsageRateTable) -> [ModelUsage] {
+        var seen = Set<String>()
+        var byModel: [String: ModelUsage] = [:]
+        for record in records {
+            if let key = record.dedupeKey, !seen.insert(key).inserted { continue }
+            var usage = byModel[record.model] ?? ModelUsage(model: record.model, tokens: 0, cost: 0)
+            usage.tokens += record.totals.total
+            if let reported = record.reportedCostUsd {
+                usage.cost = usage.cost.map { $0 + reported }
+            } else if let rate = rates.rate(for: record.model) {
+                usage.cost = usage.cost.map { $0 + rate.cost(of: record.totals) }
+            } else {
+                usage.cost = nil
+            }
+            byModel[record.model] = usage
+        }
+        return byModel.values.sorted {
+            ($0.cost ?? -1, $0.tokens) > ($1.cost ?? -1, $1.tokens)
+        }
     }
 }
