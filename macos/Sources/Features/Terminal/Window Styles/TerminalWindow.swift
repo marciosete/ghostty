@@ -115,7 +115,32 @@ class TerminalWindow: NSWindow {
 
     private func shownTabColorDidChange() {
         tabColorIndicator.rootView = TabColorIndicatorView(tabColor: shownTabColor, claudeCodeState: claudeCodeState)
+        updateSpeakTabButton()
         postTabSidebarItemDidChange()
+    }
+
+    /// Whether the last response of this tab's Claude Code session is being read aloud.
+    var isSpeakingClaudeCodeResponse = false {
+        didSet {
+            guard isSpeakingClaudeCodeResponse != oldValue else { return }
+            updateSpeakTabButton()
+            postTabSidebarItemDidChange()
+        }
+    }
+
+    /// The ElevenLabs voice picked for this tab's session, or nil for the default.
+    var speechVoiceID: String? {
+        didSet {
+            guard speechVoiceID != oldValue else { return }
+            invalidateRestorableState()
+            postTabSidebarItemDidChange()
+        }
+    }
+
+    /// Whether the tab offers to read its session's last response aloud: while it shows
+    /// what a Claude Code session is doing, or while it is reading.
+    var canSpeakClaudeCodeResponse: Bool {
+        claudeCodeState != nil || isSpeakingClaudeCodeResponse
     }
 
     /// The user tab group (shown in the tab sidebar) that this tab belongs to.
@@ -242,6 +267,7 @@ class TerminalWindow: NSWindow {
         // zoomed state, etc. Note I tried to use SwiftUI here but ran into issues
         // where buttons were not clickable on macOS 15.
         tabColorIndicator.rootView = TabColorIndicatorView(tabColor: shownTabColor, claudeCodeState: claudeCodeState)
+        updateSpeakTabButton()
 
         let stackView = NSStackView()
         stackView.orientation = .horizontal
@@ -249,6 +275,7 @@ class TerminalWindow: NSWindow {
         stackView.spacing = 4
         stackView.alignment = .centerY
         stackView.addArrangedSubview(tabColorIndicator)
+        stackView.addArrangedSubview(speakTabButton)
         stackView.addArrangedSubview(keyEquivalentLabel)
         stackView.addArrangedSubview(resetZoomTabButton)
         tab.accessoryView = stackView
@@ -278,6 +305,7 @@ class TerminalWindow: NSWindow {
 
     override func close() {
         tabTitleEditor.finishEditing(commit: true)
+        if isSpeakingClaudeCodeResponse { ClaudeCodeSpeaker.shared.stop() }
         NotificationCenter.default.post(name: Self.terminalWillCloseNotification, object: self)
         super.close()
     }
@@ -318,6 +346,11 @@ class TerminalWindow: NSWindow {
     @discardableResult
     func beginInlineTabTitleEdit(for targetWindow: NSWindow) -> Bool {
         tabTitleEditor.beginEditing(for: targetWindow)
+    }
+
+    @objc fileprivate func pickVoiceFromContextMenu(_ sender: NSMenuItem) {
+        guard let (window, voiceID) = sender.representedObject as? (TerminalWindow, String) else { return }
+        window.speechVoiceID = voiceID
     }
 
     @objc fileprivate func landFromContextMenu(_ sender: NSMenuItem) {
@@ -490,6 +523,34 @@ class TerminalWindow: NSWindow {
         button.widthAnchor.constraint(equalToConstant: 20).isActive = true
         button.heightAnchor.constraint(equalToConstant: 20).isActive = true
         return button
+    }
+
+    /// Reads the tab's Claude Code session's last response aloud, or stops reading it.
+    private lazy var speakTabButton: NSButton = {
+        let button = NSButton()
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.target = self
+        button.action = #selector(speakTabButtonClicked(_:))
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        return button
+    }()
+
+    private func updateSpeakTabButton() {
+        let speaking = isSpeakingClaudeCodeResponse
+        speakTabButton.isHidden = !canSpeakClaudeCodeResponse
+        speakTabButton.image = NSImage(
+            systemSymbolName: speaking ? "speaker.wave.2.fill" : "speaker.wave.2",
+            accessibilityDescription: speaking ? "Stop Reading" : "Read Last Response Aloud")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+        speakTabButton.contentTintColor = speaking ? .controlAccentColor : .secondaryLabelColor
+        speakTabButton.toolTip = speaking ? "Stop Reading" : "Read Last Response Aloud"
+    }
+
+    @objc private func speakTabButtonClicked(_ sender: NSButton) {
+        ClaudeCodeSpeaker.shared.toggle(self)
     }
 
     // MARK: Title Text
@@ -904,6 +965,7 @@ extension TerminalWindow {
 
     private static let tabColorPaletteIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.tabColorPalette")
     private static let landMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.landClaudeCodeWorktree")
+    private static let voiceMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.speechVoice")
 
     func configureTabContextMenuIfNeeded(_ menu: NSMenu) {
         guard isTabContextMenu(menu) else { return }
@@ -957,7 +1019,8 @@ extension TerminalWindow {
             Self.tabColorSeparatorIdentifier,
             Self.changeTitleMenuItemIdentifier,
             Self.tabColorPaletteIdentifier,
-            Self.landMenuItemIdentifier
+            Self.landMenuItemIdentifier,
+            Self.voiceMenuItemIdentifier
         ])
 
         let separator = NSMenuItem.separator()
@@ -983,6 +1046,26 @@ extension TerminalWindow {
             landItem.representedObject = window
             landItem.setImageIfDesired(systemSymbolName: "arrow.triangle.merge")
             menu.addItem(landItem)
+        }
+
+        if let window = target?.window as? TerminalWindow {
+            let voiceItem = NSMenuItem(title: "Voice", action: nil, keyEquivalent: "")
+            voiceItem.identifier = Self.voiceMenuItemIdentifier
+            voiceItem.setImageIfDesired(systemSymbolName: "speaker.wave.2")
+            let voices = NSMenu()
+            let selected = window.speechVoiceID ?? ElevenLabs.defaultVoiceID
+            for voice in ElevenLabs.voices {
+                let item = NSMenuItem(
+                    title: voice.name,
+                    action: #selector(TerminalWindow.pickVoiceFromContextMenu(_:)),
+                    keyEquivalent: "")
+                item.target = self
+                item.representedObject = (window, voice.id)
+                item.state = voice.id == selected ? .on : .off
+                voices.addItem(item)
+            }
+            voiceItem.submenu = voices
+            menu.addItem(voiceItem)
         }
 
         let paletteItem = NSMenuItem()

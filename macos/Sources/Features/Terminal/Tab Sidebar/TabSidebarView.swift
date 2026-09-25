@@ -449,7 +449,37 @@ private struct TabSidebarTabRow: View {
 
             Spacer(minLength: 0)
 
-            if isHovering && !isEditing {
+            if tab.canSpeak && !isEditing {
+                Button {
+                    if let window = tab.window { ClaudeCodeSpeaker.shared.toggle(window) }
+                } label: {
+                    Image(systemName: tab.isSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
+                        .font(.system(size: 10, weight: .medium))
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(tab.isSpeaking ? 1 : 0.6)
+                .help(tab.isSpeaking ? "Stop Reading" : "Read Last Response Aloud")
+            }
+
+            // Only one of these shows at a time, but all of them take their space, so the
+            // speaker before them doesn't move when the close button shows on hover.
+            let showsClose = isHovering && !isEditing
+            let showsKey = !showsClose && showsShortcut && tab.keyEquivalent != nil
+            ZStack(alignment: .trailing) {
+                if let state = tab.claudeCodeState {
+                    TabSidebarClaudeCodeStatus(state: state, activity: tab.claudeCodeActivity, tint: symbolTint)
+                        .opacity(showsClose || showsKey ? 0 : 1)
+                }
+                if let keyEquivalent = tab.keyEquivalent {
+                    Text(keyEquivalent)
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 5)
+                        .frame(minHeight: 16)
+                        .background(Capsule().fill(foreground.opacity(0.18)))
+                        .opacity(showsKey ? 1 : 0)
+                }
                 Button {
                     if let window = tab.window { model.close(window) }
                 } label: {
@@ -459,16 +489,9 @@ private struct TabSidebarTabRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .opacity(0.8)
+                .opacity(showsClose ? 0.8 : 0)
+                .allowsHitTesting(showsClose)
                 .help("Close Session")
-            } else if showsShortcut, let keyEquivalent = tab.keyEquivalent {
-                Text(keyEquivalent)
-                    .font(.system(size: 10, weight: .medium))
-                    .padding(.horizontal, 5)
-                    .frame(minHeight: 16)
-                    .background(Capsule().fill(foreground.opacity(0.18)))
-            } else if let state = tab.claudeCodeState {
-                TabSidebarClaudeCodeStatus(state: state, activity: tab.claudeCodeActivity, tint: symbolTint)
             }
         }
     }
@@ -604,6 +627,20 @@ private struct TabSidebarTabRow: View {
             Button("Rename Session…") { model.beginRename(window) }
             TabSidebarColorMenu(title: "Session Color", choices: TerminalTabColor.tabChoices, selected: tab.assignedColor) { color in
                 model.setColor(color, for: window)
+            }
+            Menu("Voice") {
+                ForEach(ElevenLabs.voices, id: \.id) { voice in
+                    let selected = (tab.speechVoiceID ?? ElevenLabs.defaultVoiceID) == voice.id
+                    Button {
+                        window.speechVoiceID = voice.id
+                    } label: {
+                        if selected {
+                            Label(voice.name, systemImage: "checkmark")
+                        } else {
+                            Text(voice.name)
+                        }
+                    }
+                }
             }
             if let state = tab.claudeCodeState, !state.landableWorktrees.isEmpty {
                 Button("Land on \(state.landingBranch ?? "Main Checkout")") {

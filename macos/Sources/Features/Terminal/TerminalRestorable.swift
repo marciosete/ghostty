@@ -79,6 +79,9 @@ final class TerminalRestorableState: TerminalRestorable {
     var userTabGroup: UserTabGroup? {
         internalState.userTabGroup
     }
+    var speechVoiceID: String? {
+        internalState.speechVoiceID
+    }
 
     /// Internal State we use to perform unit tests
     ///
@@ -123,6 +126,8 @@ final class TerminalRestorableState: TerminalRestorable {
 
         // Restore the tab title override
         c.titleOverride = titleOverride
+
+        (window as? TerminalWindow)?.speechVoiceID = speechVoiceID
 
         // Restore the tab's group in the tab sidebar
         if let userTabGroup {

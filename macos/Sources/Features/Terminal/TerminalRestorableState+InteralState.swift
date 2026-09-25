@@ -19,6 +19,10 @@ extension TerminalRestorableState {
         // MARK: - Tab sidebar
         // Optional, so state saved without it still decodes.
         let userTabGroup: UserTabGroup?
+
+        // MARK: - Speech
+        // The ElevenLabs voice picked for the session. Optional, like the group.
+        let speechVoiceID: String?
     }
 }
 
@@ -31,6 +35,7 @@ extension TerminalRestorableState.InternalState where ViewType == Ghostty.Surfac
             tabColor: (controller.window as? TerminalWindow)?.tabColor,
             titleOverride: controller.titleOverride,
             userTabGroup: UserTabGroupStore.shared[(controller.window as? TerminalWindow)?.userTabGroupID],
+            speechVoiceID: (controller.window as? TerminalWindow)?.speechVoiceID,
         )
     }
 }

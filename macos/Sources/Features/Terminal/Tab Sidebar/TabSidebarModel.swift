@@ -33,6 +33,10 @@ final class TabSidebarModel: ObservableObject {
 
         /// When its Claude Code sessions changed what they were doing.
         let claudeCodeActivity: ClaudeCodeActivity
+        /// Whether the tab offers to read its session's last response aloud, and whether it is.
+        let canSpeak: Bool
+        let isSpeaking: Bool
+        let speechVoiceID: String?
         let keyEquivalent: String?
         let isSelected: Bool
         let isZoomed: Bool
@@ -46,6 +50,9 @@ final class TabSidebarModel: ObservableObject {
                 lhs.assignedColor == rhs.assignedColor &&
                 lhs.claudeCodeState == rhs.claudeCodeState &&
                 lhs.claudeCodeActivity == rhs.claudeCodeActivity &&
+                lhs.canSpeak == rhs.canSpeak &&
+                lhs.isSpeaking == rhs.isSpeaking &&
+                lhs.speechVoiceID == rhs.speechVoiceID &&
                 lhs.keyEquivalent == rhs.keyEquivalent &&
                 lhs.isSelected == rhs.isSelected &&
                 lhs.isZoomed == rhs.isZoomed &&
@@ -200,6 +207,9 @@ final class TabSidebarModel: ObservableObject {
                 assignedColor: window.tabColor,
                 claudeCodeState: window.claudeCodeState,
                 claudeCodeActivity: window.claudeCodeActivity,
+                canSpeak: window.canSpeakClaudeCodeResponse,
+                isSpeaking: window.isSpeakingClaudeCodeResponse,
+                speechVoiceID: window.speechVoiceID,
                 keyEquivalent: window.keyEquivalent.flatMap { $0.isEmpty ? nil : $0 },
                 isSelected: window === selected,
                 isZoomed: window.surfaceIsZoomed,
