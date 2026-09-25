@@ -48,11 +48,11 @@ extension AppDelegate {
         viewMenu.insertItem(.separator(), at: 5)
 
         let captureSystemPrompts = NSMenuItem(
-            title: "Capture Claude Code System Prompts",
+            title: "Capture Claude Code Requests",
             action: #selector(AppDelegate.toggleSystemPromptCapture(_:)),
             keyEquivalent: "")
         let showSystemPrompts = NSMenuItem(
-            title: "Show Captured System Prompts",
+            title: "Show Captured Requests",
             action: #selector(AppDelegate.showCapturedSystemPrompts(_:)),
             keyEquivalent: "")
 

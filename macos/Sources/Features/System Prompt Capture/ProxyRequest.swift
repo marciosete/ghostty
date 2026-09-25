@@ -7,6 +7,9 @@ struct ProxyRequest: Equatable {
     /// The path and query, such as `/v1/messages?beta=true`.
     let target: String
 
+    /// Such as `HTTP/1.1`.
+    let version: String
+
     /// In the order they were sent. Names keep their case.
     let headers: [(name: String, value: String)]
 
@@ -29,9 +32,20 @@ struct ProxyRequest: Equatable {
     static func == (lhs: ProxyRequest, rhs: ProxyRequest) -> Bool {
         lhs.method == rhs.method
             && lhs.target == rhs.target
+            && lhs.version == rhs.version
             && lhs.headers.map(\.name) == rhs.headers.map(\.name)
             && lhs.headers.map(\.value) == rhs.headers.map(\.value)
             && lhs.body == rhs.body
+    }
+
+    /// The request line and headers as they were sent, with the values of the headers in
+    /// `redacting` masked.
+    func head(redacting redacted: Set<String>) -> String {
+        var lines = ["\(method) \(target) \(version)"]
+        for (name, value) in headers {
+            lines.append("\(name): \(redacted.contains(name.lowercased()) ? "[redacted]" : value)")
+        }
+        return lines.joined(separator: "\r\n") + "\r\n\r\n"
     }
 
     private static let headerEnd = Data("\r\n\r\n".utf8)
@@ -72,6 +86,7 @@ struct ProxyRequest: Equatable {
         return ProxyRequest(
             method: String(requestLine[0]),
             target: String(requestLine[1]),
+            version: String(requestLine[2]),
             headers: headers,
             body: body)
     }
