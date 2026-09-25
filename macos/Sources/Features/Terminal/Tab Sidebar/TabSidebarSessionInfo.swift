@@ -8,12 +8,15 @@ struct TabSidebarSessionInfo: Equatable {
     /// The directory, when a terminal has reported one.
     var directory: String?
 
+    /// How `directory` is checked out, or nil outside a repository.
+    var checkout: Git.Checkout?
+
     /// The branch checked out in `directory`, or nil outside a repository or when HEAD is
     /// detached.
-    var branch: String?
+    var branch: String? { checkout?.branch }
 
     /// `directory` is in a linked worktree, such as one `claude --worktree` made.
-    var isLinkedWorktree = false
+    var isLinkedWorktree: Bool { checkout?.isLinkedWorktree ?? false }
 
     /// The Claude Code sessions running in the tab's terminals.
     var claudeSessions: [ClaudeCodeSession] = []
@@ -21,11 +24,6 @@ struct TabSidebarSessionInfo: Equatable {
     /// `directory` with the home directory as `~`.
     var abbreviatedDirectory: String? {
         directory.map { ($0 as NSString).abbreviatingWithTildeInPath }
-    }
-
-    /// The last component of `directory`.
-    var directoryName: String? {
-        directory.map { ($0 as NSString).lastPathComponent }
     }
 }
 
@@ -38,7 +36,7 @@ final class TabSidebarSessionInfoReader {
     private let queue = DispatchQueue(label: "com.mitchellh.ghostty.tab-sidebar-info", qos: .utility)
 
     /// Only touched on `queue`.
-    private var checkouts: [String: (value: (branch: String?, isLinkedWorktree: Bool)?, readAt: Date)] = [:]
+    private var checkouts: [String: (value: Git.Checkout?, readAt: Date)] = [:]
 
     /// A tab to read: its foreground processes and its focused terminal's directory.
     struct Request {
@@ -63,14 +61,11 @@ final class TabSidebarSessionInfoReader {
         info.claudeSessions = request.pids.compactMap(ClaudeCodeSession.running(pid:))
         info.directory = info.claudeSessions.first?.cwd ?? request.directory
 
-        if let directory = info.directory, let checkout = checkout(of: directory) {
-            info.branch = checkout.branch
-            info.isLinkedWorktree = checkout.isLinkedWorktree
-        }
+        info.checkout = info.directory.flatMap(checkout(of:))
         return info
     }
 
-    private func checkout(of directory: String) -> (branch: String?, isLinkedWorktree: Bool)? {
+    private func checkout(of directory: String) -> Git.Checkout? {
         if let known = checkouts[directory], Date().timeIntervalSince(known.readAt) < Self.gitMaxAge {
             return known.value
         }

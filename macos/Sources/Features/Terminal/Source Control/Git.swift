@@ -383,21 +383,41 @@ enum Git {
 
     // MARK: Running git
 
-    /// Where `directory` is checked out: its branch (nil when HEAD is detached) and
-    /// whether it is a linked worktree. Nil if it isn't in a repository.
-    static func checkout(of directory: URL) -> (branch: String?, isLinkedWorktree: Bool)? {
+    /// Where a directory is checked out.
+    struct Checkout: Equatable {
+        /// The folder of the repository's main checkout, which names the project even
+        /// from one of its worktrees.
+        let project: String
+
+        /// The branch, or nil when HEAD is detached.
+        let branch: String?
+
+        /// The directory is in a linked worktree.
+        let isLinkedWorktree: Bool
+    }
+
+    /// Where `directory` is checked out, or nil if it isn't in a repository.
+    static func checkout(of directory: URL) -> Checkout? {
         guard let output = run(
-            ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"],
+            ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"],
             in: directory
         ) else { return nil }
         return parseCheckout(output)
     }
 
-    static func parseCheckout(_ output: String) -> (branch: String?, isLinkedWorktree: Bool)? {
+    static func parseCheckout(_ output: String) -> Checkout? {
         let lines = output.split(separator: "\n").map(String.init)
-        guard lines.count >= 3 else { return nil }
-        let branch = lines[2] == "HEAD" ? nil : lines[2]
-        return (branch, realPath(lines[0]) != realPath(lines[1]))
+        guard lines.count >= 4 else { return nil }
+        let isLinkedWorktree = realPath(lines[1]) != realPath(lines[2])
+
+        // A worktree's common git directory is the main checkout's `.git`.
+        let main = isLinkedWorktree
+            ? URL(fileURLWithPath: lines[2]).deletingLastPathComponent()
+            : URL(fileURLWithPath: lines[0])
+        return Checkout(
+            project: main.lastPathComponent,
+            branch: lines[3] == "HEAD" ? nil : lines[3],
+            isLinkedWorktree: isLinkedWorktree)
     }
 
     /// Runs git and returns its output, or nil if it fails.

@@ -196,15 +196,14 @@ struct ClaudeCodeLightTests {
         defer { try? FileManager.default.removeItem(at: made) }
 
         let mainCheckout = Git.checkout(of: main)
-        #expect(mainCheckout?.branch == "main")
-        #expect(mainCheckout?.isLinkedWorktree == false)
+        #expect(mainCheckout == Git.Checkout(project: "main", branch: "main", isLinkedWorktree: false))
 
+        // A worktree is named after its main checkout, whatever its own folder is called.
         let worktreeCheckout = Git.checkout(of: worktree)
-        #expect(worktreeCheckout?.branch == "worktree-a")
-        #expect(worktreeCheckout?.isLinkedWorktree == true)
+        #expect(worktreeCheckout == Git.Checkout(project: "main", branch: "worktree-a", isLinkedWorktree: true))
 
         #expect(Git.checkout(of: made) == nil)
-        #expect(Git.parseCheckout("/r/.git\n/r/.git\nHEAD\n")?.branch == nil)
+        #expect(Git.parseCheckout("/r\n/r/.git\n/r/.git\nHEAD\n")?.branch == nil)
     }
 
     /// A repository with one commit on `main` and a linked worktree on `worktree-a`.

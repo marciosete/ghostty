@@ -473,24 +473,18 @@ private struct TabSidebarTabRow: View {
         }
     }
 
-    /// Where the session works: its branch and directory, or its directory alone
-    /// outside a repository.
+    /// Where the session works: its project and branch, its project's worktree, or its
+    /// directory outside a repository. A worktree's branch is left to the hover card,
+    /// since worktrees get made up names.
     @ViewBuilder
     private var locationLine: some View {
-        if let info, let text = info.branch ?? info.abbreviatedDirectory {
+        if let info, let location = Self.location(of: info) {
             HStack(spacing: 4) {
-                Image(systemName: info.branch == nil ? "folder" : info.isLinkedWorktree ? "square.stack.3d.up" : "arrow.triangle.branch")
+                Image(systemName: location.symbol)
                     .font(.system(size: 9, weight: .semibold))
-                Text(text)
+                Text(location.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                // A worktree's branch is usually named after its folder.
-                if let branch = info.branch, let name = info.directoryName, !branch.contains(name) {
-                    Text("· \(name)")
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .layoutPriority(-1)
-                }
             }
             .font(.system(size: 11))
             .opacity(0.6)
@@ -498,6 +492,19 @@ private struct TabSidebarTabRow: View {
             // Keeps the row's layout while the info is read.
             Text(" ").font(.system(size: 11))
         }
+    }
+
+    static func location(of info: TabSidebarSessionInfo) -> (symbol: String, text: String)? {
+        if let checkout = info.checkout {
+            if checkout.isLinkedWorktree {
+                return ("square.stack.3d.up", "\(checkout.project) · worktree")
+            }
+            if let branch = checkout.branch {
+                return ("arrow.triangle.branch", "\(checkout.project) · \(branch)")
+            }
+            return ("arrow.triangle.branch", checkout.project)
+        }
+        return info.abbreviatedDirectory.map { ("folder", $0) }
     }
 
     private func showHoverCard() {
