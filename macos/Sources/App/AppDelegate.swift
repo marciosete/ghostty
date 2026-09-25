@@ -1326,6 +1326,10 @@ extension AppDelegate: NSMenuItemValidation {
             // terminal window (not quick terminal).
             return NSApp.keyWindow is TerminalWindow
 
+        case #selector(toggleSystemPromptCapture(_:)):
+            item.state = SystemPromptCapture.shared.isEnabled ? .on : .off
+            return true
+
         case #selector(undo(_:)):
             if undoManager.canUndo {
                 item.title = "Undo \(undoManager.undoActionName)"

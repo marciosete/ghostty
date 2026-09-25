@@ -38,5 +38,28 @@ extension AppDelegate {
         viewMenu.insertItem(toggleSourceControl, at: 2)
         viewMenu.insertItem(toggleUsage, at: 3)
         viewMenu.insertItem(.separator(), at: 4)
+
+        let captureSystemPrompts = NSMenuItem(
+            title: "Capture Claude Code System Prompts",
+            action: #selector(AppDelegate.toggleSystemPromptCapture(_:)),
+            keyEquivalent: "")
+        let showSystemPrompts = NSMenuItem(
+            title: "Show Captured System Prompts",
+            action: #selector(AppDelegate.showCapturedSystemPrompts(_:)),
+            keyEquivalent: "")
+
+        viewMenu.insertItem(captureSystemPrompts, at: 5)
+        viewMenu.insertItem(showSystemPrompts, at: 6)
+        viewMenu.insertItem(.separator(), at: 7)
+    }
+
+    /// Takes effect in terminals opened afterwards.
+    @IBAction func toggleSystemPromptCapture(_ sender: Any?) {
+        let capture = SystemPromptCapture.shared
+        capture.setEnabled(!capture.isEnabled)
+    }
+
+    @IBAction func showCapturedSystemPrompts(_ sender: Any?) {
+        SystemPromptCapture.shared.revealInFinder()
     }
 }
