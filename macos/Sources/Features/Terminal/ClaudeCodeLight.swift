@@ -141,13 +141,20 @@ struct ClaudeCodeTabState: Equatable {
         return "\(badge) \(badge == 1 ? "file" : "files") not committed"
     }
 
+    /// When the sessions stopped working: when they were seen to, or else, for sessions
+    /// found stopped, when they were `lastActive`.
+    func stoppedSince(_ activity: ClaudeCodeActivity, lastActive: Date?) -> Date? {
+        guard light != .working else { return nil }
+        return activity.stoppedSince ?? lastActive
+    }
+
     /// Says what the sessions are doing and since when, such as "Working, for 4m" or
     /// "3 files not committed, since 5m ago".
-    func summary(_ activity: ClaudeCodeActivity, at now: Date) -> String {
+    func summary(_ activity: ClaudeCodeActivity, lastActive: Date? = nil, at now: Date) -> String {
         var parts = [badgeHelp ?? light.label]
         if light == .working, let start = activity.workingSince {
             parts.append("for \(ClaudeCodeActivity.elapsed(since: start, at: now))")
-        } else if let stopped = activity.stoppedSince {
+        } else if let stopped = stoppedSince(activity, lastActive: lastActive) {
             let ago = ClaudeCodeActivity.ago(stopped, at: now)
             parts.append(ago == "now" ? "just now" : "since \(ago) ago")
         }

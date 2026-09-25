@@ -21,6 +21,10 @@ struct TabSidebarSessionInfo: Equatable {
     /// The Claude Code sessions running in the tab's terminals.
     var claudeSessions: [ClaudeCodeSession] = []
 
+    /// When a Claude Code session last wrote to its transcript, which says how long ago a
+    /// session found already finished did its last work.
+    var lastActive: Date?
+
     /// `directory` with the home directory as `~`.
     var abbreviatedDirectory: String? {
         directory.map { ($0 as NSString).abbreviatingWithTildeInPath }
@@ -60,9 +64,16 @@ final class TabSidebarSessionInfoReader {
         var info = TabSidebarSessionInfo()
         info.claudeSessions = request.pids.compactMap(ClaudeCodeSession.running(pid:))
         info.directory = info.claudeSessions.first?.cwd ?? request.directory
+        info.lastActive = info.claudeSessions
+            .compactMap { $0.transcript.flatMap(Self.modified) }
+            .max()
 
         info.checkout = info.directory.flatMap(checkout(of:))
         return info
+    }
+
+    private static func modified(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
     private func checkout(of directory: String) -> Git.Checkout? {

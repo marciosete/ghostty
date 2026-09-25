@@ -464,7 +464,11 @@ private struct TabSidebarTabRow: View {
             let showsKey = !showsClose && showsShortcut && tab.keyEquivalent != nil
             ZStack(alignment: .trailing) {
                 if let state = tab.claudeCodeState {
-                    TabSidebarClaudeCodeStatus(state: state, activity: tab.claudeCodeActivity, tint: symbolTint)
+                    TabSidebarClaudeCodeStatus(
+                        state: state,
+                        activity: tab.claudeCodeActivity,
+                        lastActive: info?.lastActive,
+                        tint: symbolTint)
                         .opacity(showsClose || showsKey ? 0 : 1)
                 }
                 if let keyEquivalent = tab.keyEquivalent {
@@ -779,11 +783,14 @@ private struct TabSidebarUnseenDot: View {
 private struct TabSidebarClaudeCodeStatus: View {
     let state: ClaudeCodeTabState
     let activity: ClaudeCodeActivity
+    let lastActive: Date?
     let tint: Color?
+
+    private var stoppedSince: Date? { state.stoppedSince(activity, lastActive: lastActive) }
 
     var body: some View {
         // A session found already done says nothing more than its color does.
-        if state.light != .clean || activity.stoppedSince != nil {
+        if state.light != .clean || stoppedSince != nil {
             status
         }
     }
@@ -802,7 +809,7 @@ private struct TabSidebarClaudeCodeStatus: View {
                 }
             }
             .opacity(0.85)
-            .help(state.summary(activity, at: context.date))
+            .help(state.summary(activity, lastActive: lastActive, at: context.date))
         }
     }
 
@@ -816,7 +823,7 @@ private struct TabSidebarClaudeCodeStatus: View {
         case .pending, .unlanded:
             return state.badge.map(String.init)
         case .clean:
-            return activity.stoppedSince.map { ClaudeCodeActivity.ago($0, at: now) }
+            return stoppedSince.map { ClaudeCodeActivity.ago($0, at: now) }
         }
     }
 

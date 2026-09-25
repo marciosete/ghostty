@@ -91,6 +91,21 @@ struct ClaudeCodeActivityTests {
         #expect(ClaudeCodeTabState(light: .clean).summary(ClaudeCodeActivity(), at: at(0)) == "Done")
     }
 
+    @Test func aSessionFoundStoppedIsDatedByItsLastActivity() {
+        let clean = ClaudeCodeTabState(light: .clean)
+        #expect(clean.stoppedSince(ClaudeCodeActivity(), lastActive: at(0)) == at(0))
+        #expect(clean.summary(ClaudeCodeActivity(), lastActive: at(0), at: at(3 * 86400)) == "Done, since 3d ago")
+
+        // Seeing it stop says more than the transcript does.
+        var activity = ClaudeCodeActivity()
+        activity.update(from: .clean, to: .working, at: at(0), seen: true)
+        activity.update(from: .working, to: .clean, at: at(60), seen: true)
+        #expect(clean.stoppedSince(activity, lastActive: at(100)) == at(60))
+
+        // A working session hasn't stopped, however old its transcript.
+        #expect(ClaudeCodeTabState(light: .working).stoppedSince(ClaudeCodeActivity(), lastActive: at(0)) == nil)
+    }
+
     @Test func sessionUsageIsTalliedByModel() {
         let rates = UsageRateTable(liteLLM: [
             "claude-opus-5-5": ["input_cost_per_token": 0.001, "output_cost_per_token": 0.002],

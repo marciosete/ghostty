@@ -168,7 +168,7 @@ struct TabSidebarHoverCardView: View {
 
             if let state = tab.claudeCodeState {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    row(state.light.symbolName, state.summary(tab.claudeCodeActivity, at: context.date), tint: tint)
+                    row(state.light.symbolName, state.summary(tab.claudeCodeActivity, lastActive: info?.lastActive, at: context.date), tint: tint)
                 }
             }
 
