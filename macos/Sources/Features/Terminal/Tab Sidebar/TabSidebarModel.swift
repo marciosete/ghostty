@@ -396,7 +396,7 @@ final class TabSidebarModel: ObservableObject {
     }
 
     func setColor(_ color: TerminalTabColor, for window: TerminalWindow) {
-        window.tabColor = color
+        window.pickTabColor(color)
     }
 
     /// Opens a new tab. With a group, the tab is added to the end of that group;

@@ -61,13 +61,26 @@ class TerminalWindow: NSWindow {
 
     /// The color assigned to this window's tab, `auto` for a new tab. Setting this updates the
     /// tab color indicator and marks the window's restorable state as dirty.
-    var tabColor: TerminalTabColor = .auto {
+    var tabColor: TerminalTabColor = TerminalTabColor.following {
         didSet {
             guard tabColor != oldValue else { return }
             invalidateRestorableState()
             ClaudeCodeLights.shared.follow(self)
             shownTabColorDidChange()
         }
+    }
+
+    /// Gives the tab the color picked for it. Following its Claude Code session, as
+    /// `auto` or `attention`, is picked for every tab that follows its session, and for
+    /// new tabs. Tabs given a color by hand keep theirs.
+    func pickTabColor(_ color: TerminalTabColor) {
+        if color.followsClaudeCode {
+            TerminalTabColor.following = color
+            for case let window as TerminalWindow in NSApp.windows where window.tabColor.followsClaudeCode {
+                window.tabColor = color
+            }
+        }
+        tabColor = color
     }
 
     /// What the Claude Code sessions in this tab are doing, while the tab's color is `auto`.
@@ -1073,7 +1086,7 @@ extension TerminalWindow {
         paletteItem.view = makeTabColorPaletteView(
             selectedColor: (target?.window as? TerminalWindow)?.tabColor ?? .none
         ) { [weak target] color in
-            (target?.window as? TerminalWindow)?.tabColor = color
+            (target?.window as? TerminalWindow)?.pickTabColor(color)
         }
         menu.addItem(paletteItem)
     }

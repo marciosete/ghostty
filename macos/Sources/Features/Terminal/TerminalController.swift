@@ -1040,7 +1040,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         if let window {
             window.setFrame(undoState.frame, display: true)
             if let terminalWindow = window as? TerminalWindow {
-                terminalWindow.tabColor = undoState.tabColor
+                terminalWindow.tabColor = undoState.tabColor.resolvingFollowing
                 if let groupID = undoState.userTabGroupID, UserTabGroupStore.shared[groupID] != nil {
                     terminalWindow.userTabGroupID = groupID
                 }

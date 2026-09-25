@@ -121,7 +121,7 @@ final class TerminalRestorableState: TerminalRestorable {
         // A traffic-light color can no longer be picked by hand, so a tab saved with one
         // was used as a light and follows its session now.
         if let tabColor {
-            (window as? TerminalWindow)?.tabColor = tabColor.isTrafficLight ? .auto : tabColor
+            (window as? TerminalWindow)?.tabColor = tabColor.isTrafficLight ? TerminalTabColor.following : tabColor.resolvingFollowing
         }
 
         // Restore the tab title override

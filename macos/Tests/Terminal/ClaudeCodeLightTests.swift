@@ -108,6 +108,24 @@ struct ClaudeCodeLightTests {
         #expect(!TerminalTabColor.pink.isTrafficLight)
     }
 
+    @Test func followingIsPickedForEveryTab() {
+        let saved = TerminalTabColor.following
+        defer { TerminalTabColor.following = saved }
+
+        TerminalTabColor.following = .attention
+        #expect(TerminalTabColor.auto.resolvingFollowing == .attention)
+        #expect(TerminalTabColor.attention.resolvingFollowing == .attention)
+        #expect(TerminalTabColor.pink.resolvingFollowing == .pink)
+        #expect(TerminalTabColor.none.resolvingFollowing == TerminalTabColor.none)
+
+        // Only a following color can be the one tabs follow with.
+        TerminalTabColor.following = .pink
+        #expect(TerminalTabColor.following == .attention)
+
+        TerminalTabColor.following = .auto
+        #expect(TerminalTabColor.attention.resolvingFollowing == .auto)
+    }
+
     @Test func savedColorsKeepTheirValues() {
         #expect(TerminalTabColor.none.rawValue == 0)
         #expect(TerminalTabColor.graphite.rawValue == 9)

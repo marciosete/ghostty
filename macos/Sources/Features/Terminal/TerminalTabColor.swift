@@ -33,6 +33,28 @@ enum TerminalTabColor: Int, CaseIterable, Codable {
         self == .auto || self == .attention
     }
 
+    private static let followingKey = "TabColorFollowing"
+
+    /// How every tab that follows its Claude Code session shows it, `auto` or
+    /// `attention`. Picking one for a tab picks it for all of them, and new tabs start
+    /// with it. Tabs given a color by hand keep theirs.
+    static var following: TerminalTabColor {
+        get {
+            let saved = UserDefaults.ghostty.object(forKey: followingKey) as? Int
+            return saved.flatMap(TerminalTabColor.init(rawValue:)).flatMap { $0.followsClaudeCode ? $0 : nil } ?? .auto
+        }
+        set {
+            guard newValue.followsClaudeCode else { return }
+            UserDefaults.ghostty.set(newValue.rawValue, forKey: followingKey)
+        }
+    }
+
+    /// This color, with a following one saved earlier read as the one all tabs follow
+    /// with now.
+    var resolvingFollowing: TerminalTabColor {
+        followsClaudeCode ? Self.following : self
+    }
+
     /// Whether this is one of the colors `auto` uses to show a session's state.
     var isTrafficLight: Bool {
         ClaudeCodeLight.allCases.contains { $0.tabColor == self }
