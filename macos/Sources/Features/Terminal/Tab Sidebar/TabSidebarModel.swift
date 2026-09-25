@@ -105,6 +105,9 @@ final class TabSidebarModel: ObservableObject {
     /// these are held.
     @Published private(set) var jumpModifiers: NSEvent.ModifierFlags?
 
+    /// Where each tab's sessions work, by tab id. Read after the rows, so it can lag them.
+    @Published private(set) var infos: [ObjectIdentifier: TabSidebarSessionInfo] = [:]
+
     /// The height of the titlebar that the sidebar and terminal content extend under.
     @Published var titlebarHeight: CGFloat = 0
 
@@ -118,11 +121,21 @@ final class TabSidebarModel: ObservableObject {
     @Published var editingDraft = ""
 
     private weak var hostWindow: TerminalWindow?
+
+    /// The window showing this sidebar.
+    var window: TerminalWindow? { hostWindow }
     private weak var observedTabGroup: NSWindowTabGroup?
     private var tabGroupObservations: [NSKeyValueObservation] = []
     private var titleObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
     private var cancellables: Set<AnyCancellable> = []
     private var refreshScheduled = false
+    private let infoReader = TabSidebarSessionInfoReader()
+    private var infoReadScheduled = false
+    private var infoTimer: Timer?
+
+    /// How often the info is read again while the sidebar shows, to catch a branch
+    /// switched in the shell.
+    private static let infoInterval: TimeInterval = 10
 
     init(hostWindow: TerminalWindow) {
         self.hostWindow = hostWindow
@@ -142,6 +155,7 @@ final class TabSidebarModel: ObservableObject {
     }
 
     deinit {
+        infoTimer?.invalidate()
         tabGroupObservations.forEach { $0.invalidate() }
         titleObservations.values.forEach { $0.invalidate() }
     }
@@ -165,6 +179,7 @@ final class TabSidebarModel: ObservableObject {
             rebindTabGroup(nil)
             rebindTitles([])
             if !rows.isEmpty { rows = [] }
+            stopReadingInfo()
             return
         }
 
@@ -216,6 +231,13 @@ final class TabSidebarModel: ObservableObject {
         }
         if jump != jumpModifiers { jumpModifiers = jump }
 
+        // Only the sidebar that shows reads the info, since every tab's window has one.
+        if selected === hostWindow {
+            scheduleInfoRead()
+        } else {
+            stopReadingInfo()
+        }
+
         // If the tab order was changed outside of the sidebar (e.g. "Merge All Windows"
         // or a move_tab keybind), a group can end up split. Put it back together. Only
         // the selected window does this so the windows in a tab group don't all race.
@@ -227,6 +249,50 @@ final class TabSidebarModel: ObservableObject {
             if Set(groupIDs).count != groupIDs.count {
                 DispatchQueue.main.async { [weak self] in self?.normalizeOrder() }
             }
+        }
+    }
+
+    // MARK: Info
+
+    private func scheduleInfoRead() {
+        if infoTimer == nil {
+            infoTimer = Timer.scheduledTimer(withTimeInterval: Self.infoInterval, repeats: true) { [weak self] _ in
+                self?.scheduleInfoRead()
+            }
+            infoTimer?.tolerance = 2
+        }
+
+        guard !infoReadScheduled else { return }
+        infoReadScheduled = true
+        // Refreshes come in bursts; read once they settle.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.readInfo()
+        }
+    }
+
+    private func stopReadingInfo() {
+        infoTimer?.invalidate()
+        infoTimer = nil
+    }
+
+    private func readInfo() {
+        infoReadScheduled = false
+        guard isActive else { return }
+
+        // Reads run on the main loop.
+        let requests = MainActor.assumeIsolated {
+            tabWindows.map { window in
+                let controller = window.terminalController
+                let surfaces = controller?.surfaceTree.root?.leaves() ?? []
+                return TabSidebarSessionInfoReader.Request(
+                    id: ObjectIdentifier(window),
+                    pids: surfaces.compactMap { $0.surfaceModel?.foregroundPID },
+                    directory: controller?.focusedSurface?.pwd)
+            }
+        }
+        infoReader.read(requests) { [weak self] infos in
+            guard let self, infos != self.infos else { return }
+            self.infos = infos
         }
     }
 

@@ -92,6 +92,13 @@ class TerminalWindow: NSWindow {
         NSApp.isActive && isVisible && (tabGroup?.selectedWindow ?? self) === self
     }
 
+    /// Marks the tab's sessions as finished and not looked at, until the tab is next
+    /// looked at.
+    func markClaudeCodeActivityUnseen() {
+        claudeCodeActivity.markUnseen()
+        postTabSidebarItemDidChange()
+    }
+
     /// Clears the finished mark once the tab is looked at.
     private func markClaudeCodeActivitySeen() {
         guard claudeCodeActivity.finishedUnseen, isLookedAt else { return }
@@ -286,6 +293,7 @@ class TerminalWindow: NSWindow {
         resetZoomTabButton.contentTintColor = .secondaryLabelColor
         tabTitleEditor.finishEditing(commit: true)
         tabSidebarModel.commitEditing()
+        TabSidebarHoverCard.shared.hideNow()
     }
 
     override func becomeMain() {

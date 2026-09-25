@@ -383,6 +383,23 @@ enum Git {
 
     // MARK: Running git
 
+    /// Where `directory` is checked out: its branch (nil when HEAD is detached) and
+    /// whether it is a linked worktree. Nil if it isn't in a repository.
+    static func checkout(of directory: URL) -> (branch: String?, isLinkedWorktree: Bool)? {
+        guard let output = run(
+            ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"],
+            in: directory
+        ) else { return nil }
+        return parseCheckout(output)
+    }
+
+    static func parseCheckout(_ output: String) -> (branch: String?, isLinkedWorktree: Bool)? {
+        let lines = output.split(separator: "\n").map(String.init)
+        guard lines.count >= 3 else { return nil }
+        let branch = lines[2] == "HEAD" ? nil : lines[2]
+        return (branch, realPath(lines[0]) != realPath(lines[1]))
+    }
+
     /// Runs git and returns its output, or nil if it fails.
     ///
     /// `--no-optional-locks` stops `git status` from rewriting the index, so reading

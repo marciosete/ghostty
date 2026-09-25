@@ -1564,6 +1564,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             .removeDuplicates()
             .sink { [weak self] pwd in
                 (self?.window as? TerminalWindow)?.sourceControlModel.setDirectory(pwd)
+                (self?.window as? TerminalWindow)?.postTabSidebarItemDidChange()
             }
             .store(in: &surfaceAppearanceCancellables)
 

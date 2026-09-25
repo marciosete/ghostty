@@ -141,6 +141,19 @@ struct ClaudeCodeTabState: Equatable {
         return "\(badge) \(badge == 1 ? "file" : "files") not committed"
     }
 
+    /// Says what the sessions are doing and since when, such as "Working, for 4m" or
+    /// "3 files not committed, since 5m ago".
+    func summary(_ activity: ClaudeCodeActivity, at now: Date) -> String {
+        var parts = [badgeHelp ?? light.label]
+        if light == .working, let start = activity.workingSince {
+            parts.append("for \(ClaudeCodeActivity.elapsed(since: start, at: now))")
+        } else if let stopped = activity.stoppedSince {
+            let ago = ClaudeCodeActivity.ago(stopped, at: now)
+            parts.append(ago == "now" ? "just now" : "since \(ago) ago")
+        }
+        return parts.joined(separator: ", ")
+    }
+
     /// The worktrees that can land now: everything in them is committed and some of it
     /// isn't on the base branch yet. Only offered while the tab is teal, so no session
     /// of the tab is working or has files to commit.
@@ -206,6 +219,13 @@ struct ClaudeCodeActivity: Equatable {
     /// The tab is being looked at.
     mutating func markSeen() {
         finishedUnseen = false
+    }
+
+    /// Marks the sessions finished and not looked at, to come back to them. Only once
+    /// they have stopped working.
+    mutating func markUnseen() {
+        guard workingSince == nil else { return }
+        finishedUnseen = true
     }
 
     /// How long a request has been working, to the second while it is short: "12s",

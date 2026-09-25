@@ -93,7 +93,7 @@ struct TabSidebarView: View {
             Color.clear.frame(height: max(topInset, 8))
 
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: TabSidebarStyle.rowSpacing(settings.rowStyle)) {
                     ForEach(model.rows) { row in
                         switch row {
                         case .tab(let tab):
@@ -172,10 +172,11 @@ struct TabSidebarView: View {
 
 private struct TabSidebarGroupSection: View {
     @ObservedObject var model: TabSidebarModel
+    @ObservedObject private var settings = TabSidebarSettings.shared
     let section: TabSidebarModel.GroupSection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: TabSidebarStyle.rowSpacing(settings.rowStyle)) {
             TabSidebarGroupHeader(model: model, section: section)
 
             if !section.group.isCollapsed {
@@ -331,9 +332,14 @@ private struct TabSidebarTabRow: View {
     @State private var placement: TabSidebarDropPlacement?
     @FocusState private var fieldFocused: Bool
 
-    private static let height = TabSidebarStyle.rowHeight
-
     @ObservedObject private var modifiers = TabSidebarModifierMonitor.shared
+    @ObservedObject private var settings = TabSidebarSettings.shared
+
+    private var isExtended: Bool { settings.rowStyle == .extended }
+    private var height: CGFloat { isExtended ? TabSidebarStyle.extendedRowHeight : TabSidebarStyle.rowHeight }
+    private var cornerRadius: CGFloat { isExtended ? 8 : 6 }
+    private var titleFont: Font { isExtended ? TabSidebarStyle.extendedTitleFont : TabSidebarStyle.titleFont }
+    private var info: TabSidebarSessionInfo? { model.infos[tab.id] }
 
     private var isEditing: Bool { model.editingTabID == tab.id }
     private var tabColor: NSColor? { tab.color.displayColor }
@@ -350,6 +356,69 @@ private struct TabSidebarTabRow: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            titleLine
+
+            if isExtended && !isEditing {
+                locationLine
+            }
+        }
+        .font(tab.isSelected ? titleFont.weight(.semibold) : titleFont)
+        .foregroundStyle(foreground)
+        .padding(.horizontal, 8)
+        .frame(height: height)
+        .background(RoundedRectangle(cornerRadius: cornerRadius).fill(background))
+        // A session that is working needs nothing yet, so it steps back and the ones
+        // waiting for an answer or finished stand out.
+        .opacity(recedes ? 0.7 : 1)
+        .animation(.easeOut(duration: 0.15), value: recedes)
+        .overlay {
+            if tab.isSelected, let outline {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(outline, lineWidth: 1)
+            }
+        }
+        .overlay(alignment: .leading) { groupMarker }
+        .overlay(alignment: placement == .after ? .bottom : .top) {
+            if placement != nil { TabSidebarDropIndicator() }
+        }
+        .padding(.leading, group == nil ? 0 : 12)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            isHovering = inside
+            if inside {
+                showHoverCard()
+            } else {
+                TabSidebarHoverCard.shared.hide(tab.id)
+            }
+        }
+        .onDisappear { TabSidebarHoverCard.shared.hide(tab.id) }
+        .onTapGesture {
+            TabSidebarHoverCard.shared.hide(tab.id)
+            guard !isEditing, let window = tab.window else { return }
+
+            // Each click of a double click arrives here, so the first click selects
+            // the tab immediately and the second starts renaming it.
+            if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+                model.beginRename(window)
+            } else {
+                model.select(window)
+            }
+        }
+        .onDrag {
+            TabSidebarHoverCard.shared.hide(tab.id)
+            guard let window = tab.window else { return NSItemProvider() }
+            return NSItemProvider(object: TabSidebarDragState.shared.begin(window) as NSString)
+        }
+        .onDrop(of: [.plainText], delegate: TabSidebarDropDelegate(
+            model: model,
+            target: .tab(tab.window),
+            height: height,
+            placement: $placement))
+        .contextMenu { contextMenu }
+    }
+
+    private var titleLine: some View {
         HStack(spacing: 6) {
             if tab.isZoomed {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
@@ -402,50 +471,42 @@ private struct TabSidebarTabRow: View {
                 TabSidebarClaudeCodeStatus(state: state, activity: tab.claudeCodeActivity, tint: symbolTint)
             }
         }
-        .font(tab.isSelected ? TabSidebarStyle.titleFont.weight(.semibold) : TabSidebarStyle.titleFont)
-        .foregroundStyle(foreground)
-        .padding(.horizontal, 8)
-        .frame(height: Self.height)
-        .background(RoundedRectangle(cornerRadius: 6).fill(background))
-        // A session that is working needs nothing yet, so it steps back and the ones
-        // waiting for an answer or finished stand out.
-        .opacity(recedes ? 0.7 : 1)
-        .animation(.easeOut(duration: 0.15), value: recedes)
-        .overlay {
-            if tab.isSelected, let outline {
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(outline, lineWidth: 1)
-            }
-        }
-        .overlay(alignment: .leading) { groupMarker }
-        .overlay(alignment: placement == .after ? .bottom : .top) {
-            if placement != nil { TabSidebarDropIndicator() }
-        }
-        .padding(.leading, group == nil ? 0 : 12)
-        .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
-        .onTapGesture {
-            guard !isEditing, let window = tab.window else { return }
+    }
 
-            // Each click of a double click arrives here, so the first click selects
-            // the tab immediately and the second starts renaming it.
-            if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
-                model.beginRename(window)
-            } else {
-                model.select(window)
+    /// Where the session works: its branch and directory, or its directory alone
+    /// outside a repository.
+    @ViewBuilder
+    private var locationLine: some View {
+        if let info, let text = info.branch ?? info.abbreviatedDirectory {
+            HStack(spacing: 4) {
+                Image(systemName: info.branch == nil ? "folder" : info.isLinkedWorktree ? "square.stack.3d.up" : "arrow.triangle.branch")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                // A worktree's branch is usually named after its folder.
+                if let branch = info.branch, let name = info.directoryName, !branch.contains(name) {
+                    Text("· \(name)")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(-1)
+                }
             }
+            .font(.system(size: 11))
+            .opacity(0.6)
+        } else {
+            // Keeps the row's layout while the info is read.
+            Text(" ").font(.system(size: 11))
         }
-        .onDrag {
-            guard let window = tab.window else { return NSItemProvider() }
-            return NSItemProvider(object: TabSidebarDragState.shared.begin(window) as NSString)
+    }
+
+    private func showHoverCard() {
+        let tab = tab
+        let info = info
+        let tint = symbolTint
+        TabSidebarHoverCard.shared.show(tab.id, from: model.window, sidebarWidth: settings.width) {
+            TabSidebarHoverCardView(tab: tab, info: info, tint: tint)
         }
-        .onDrop(of: [.plainText], delegate: TabSidebarDropDelegate(
-            model: model,
-            target: .tab(tab.window),
-            height: Self.height,
-            placement: $placement))
-        .contextMenu { contextMenu }
-        .help(tab.title)
     }
 
     /// A thin bar in the group's color marks tabs that belong to a colored group.
@@ -454,7 +515,7 @@ private struct TabSidebarTabRow: View {
         if let group, let color = group.color.displayColor {
             RoundedRectangle(cornerRadius: 1.5)
                 .fill(Color(nsColor: color))
-                .frame(width: 3, height: Self.height - 10)
+                .frame(width: 3, height: height - 10)
                 .offset(x: -8)
         }
     }
@@ -544,6 +605,25 @@ private struct TabSidebarTabRow: View {
                 .help("Rebase the session's commits onto the branch, then fast-forward it")
             }
 
+            if tab.claudeCodeState != nil,
+               !tab.claudeCodeActivity.finishedUnseen,
+               tab.claudeCodeActivity.workingSince == nil {
+                Button("Mark as Unread") { window.markClaudeCodeActivityUnseen() }
+            }
+
+            if let info, info.directory != nil || info.branch != nil || !info.claudeSessions.isEmpty {
+                Divider()
+                if let directory = info.directory {
+                    Button("Copy Path") { Self.copy(directory) }
+                }
+                if let branch = info.branch {
+                    Button("Copy Branch") { Self.copy(branch) }
+                }
+                if let session = info.claudeSessions.first {
+                    Button("Copy Session ID") { Self.copy(session.id.uuidString.lowercased()) }
+                }
+            }
+
             Divider()
 
             Button("Add Session to New Group") { model.createGroup(with: window) }
@@ -568,7 +648,22 @@ private struct TabSidebarTabRow: View {
             Button("Close Session") { model.close(window) }
             Button("Close Other Sessions") { model.closeOthers(window) }
             Button("Close Sessions Below") { model.closeBelow(window) }
+
+            Divider()
+
+            Menu("Row Style") {
+                ForEach(TabSidebarSettings.RowStyle.allCases, id: \.self) { style in
+                    Button(style == settings.rowStyle ? "\(style.localizedName) ✓" : style.localizedName) {
+                        settings.rowStyle = style
+                    }
+                }
+            }
         }
+    }
+
+    private static func copy(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
     }
 }
 
@@ -578,6 +673,13 @@ private struct TabSidebarTabRow: View {
 private enum TabSidebarStyle {
     static let titleFont = Font.system(size: 12)
     static let rowHeight: CGFloat = 28
+
+    static let extendedTitleFont = Font.system(size: 13)
+    static let extendedRowHeight: CGFloat = 44
+
+    static func rowSpacing(_ style: TabSidebarSettings.RowStyle) -> CGFloat {
+        style == .extended ? 4 : 2
+    }
 }
 
 /// A submenu that picks a tab color, showing a swatch for each color.
@@ -633,7 +735,7 @@ private struct TabSidebarClaudeCodeStatus: View {
         // Only a working session counts seconds.
         TimelineView(.periodic(from: .now, by: state.light == .working ? 1 : 30)) { context in
             HStack(spacing: 3) {
-                Image(systemName: symbol)
+                Image(systemName: state.light.symbolName)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(tint ?? Color.primary)
                 if let text = text(at: context.date) {
@@ -643,19 +745,10 @@ private struct TabSidebarClaudeCodeStatus: View {
                 }
             }
             .opacity(0.85)
-            .help(help(at: context.date))
+            .help(state.summary(activity, at: context.date))
         }
     }
 
-    private var symbol: String {
-        switch state.light {
-        case .working: return "circle.dashed"
-        case .waiting: return "exclamationmark.bubble"
-        case .pending: return "pencil"
-        case .unlanded: return "arrow.triangle.merge"
-        case .clean: return "checkmark"
-        }
-    }
 
     private func text(at now: Date) -> String? {
         switch state.light {
@@ -670,15 +763,18 @@ private struct TabSidebarClaudeCodeStatus: View {
         }
     }
 
-    private func help(at now: Date) -> String {
-        var parts = [state.badgeHelp ?? state.light.label]
-        if state.light == .working, let start = activity.workingSince {
-            parts.append("for \(ClaudeCodeActivity.elapsed(since: start, at: now))")
-        } else if let stopped = activity.stoppedSince {
-            let ago = ClaudeCodeActivity.ago(stopped, at: now)
-            parts.append(ago == "now" ? "just now" : "since \(ago) ago")
+}
+
+extension ClaudeCodeLight {
+    /// The symbol shown for the light, so it reads without telling colors apart.
+    var symbolName: String {
+        switch self {
+        case .working: return "circle.dashed"
+        case .waiting: return "exclamationmark.bubble"
+        case .pending: return "pencil"
+        case .unlanded: return "arrow.triangle.merge"
+        case .clean: return "checkmark"
         }
-        return parts.joined(separator: ", ")
     }
 }
 

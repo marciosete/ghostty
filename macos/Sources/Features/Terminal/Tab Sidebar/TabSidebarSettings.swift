@@ -10,6 +10,7 @@ final class TabSidebarSettings: ObservableObject {
     private static let enabledKey = "TabSidebarEnabled"
     private static let collapsedKey = "TabSidebarCollapsed"
     private static let widthKey = "TabSidebarWidth"
+    private static let rowStyleKey = "TabSidebarRowStyle"
 
     static let minWidth: CGFloat = 150
     static let maxWidth: CGFloat = 420
@@ -31,10 +32,32 @@ final class TabSidebarSettings: ObservableObject {
         didSet { UserDefaults.ghostty.set(Double(width), forKey: Self.widthKey) }
     }
 
+    /// How much each session's row shows.
+    enum RowStyle: String, CaseIterable {
+        /// One line: the title and what the session is doing.
+        case simple
+
+        /// A taller row that also shows where the session works: its branch, or its
+        /// directory.
+        case extended
+
+        var localizedName: String {
+            switch self {
+            case .simple: return "Simple"
+            case .extended: return "Extended"
+            }
+        }
+    }
+
+    @Published var rowStyle: RowStyle {
+        didSet { UserDefaults.ghostty.set(rowStyle.rawValue, forKey: Self.rowStyleKey) }
+    }
+
     private init() {
         let defaults = UserDefaults.ghostty
         isEnabled = defaults.object(forKey: Self.enabledKey) as? Bool ?? true
         isCollapsed = defaults.bool(forKey: Self.collapsedKey)
+        rowStyle = defaults.string(forKey: Self.rowStyleKey).flatMap(RowStyle.init(rawValue:)) ?? .simple
 
         let storedWidth = defaults.double(forKey: Self.widthKey)
         width = storedWidth > 0

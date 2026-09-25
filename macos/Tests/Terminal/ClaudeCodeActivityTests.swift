@@ -68,6 +68,29 @@ struct ClaudeCodeActivityTests {
         #expect(activity == ClaudeCodeActivity())
     }
 
+    @Test func markingUnreadWaitsForTheSessionToStop() {
+        var activity = ClaudeCodeActivity()
+        activity.update(from: .clean, to: .working, at: at(10), seen: true)
+        activity.markUnseen()
+        #expect(!activity.finishedUnseen)
+
+        activity.update(from: .working, to: .clean, at: at(20), seen: true)
+        activity.markUnseen()
+        #expect(activity.finishedUnseen)
+    }
+
+    @Test func summarySaysWhatAndSinceWhen() {
+        var activity = ClaudeCodeActivity()
+        activity.update(from: .clean, to: .working, at: at(0), seen: true)
+        #expect(ClaudeCodeTabState(light: .working).summary(activity, at: at(240)) == "Working, for 4m")
+
+        activity.update(from: .working, to: .pending, at: at(300), seen: true)
+        let pending = ClaudeCodeTabState(light: .pending, pendingFiles: 3, editedFiles: 3)
+        #expect(pending.summary(activity, at: at(600)) == "3 files not committed, since 5m ago")
+        #expect(pending.summary(activity, at: at(310)) == "3 files not committed, just now")
+        #expect(ClaudeCodeTabState(light: .clean).summary(ClaudeCodeActivity(), at: at(0)) == "Done")
+    }
+
     @Test func elapsed() {
         #expect(ClaudeCodeActivity.elapsed(since: start, at: at(12)) == "12s")
         #expect(ClaudeCodeActivity.elapsed(since: start, at: at(4 * 60 + 5)) == "4m")

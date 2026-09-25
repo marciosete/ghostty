@@ -191,6 +191,22 @@ struct ClaudeCodeLightTests {
         #expect(worktrees.map(\.branch) == ["main", "worktree-a", nil])
     }
 
+    @Test func readsWhereADirectoryIsCheckedOut() throws {
+        let (made, main, worktree) = try Self.repositoryWithWorktree()
+        defer { try? FileManager.default.removeItem(at: made) }
+
+        let mainCheckout = Git.checkout(of: main)
+        #expect(mainCheckout?.branch == "main")
+        #expect(mainCheckout?.isLinkedWorktree == false)
+
+        let worktreeCheckout = Git.checkout(of: worktree)
+        #expect(worktreeCheckout?.branch == "worktree-a")
+        #expect(worktreeCheckout?.isLinkedWorktree == true)
+
+        #expect(Git.checkout(of: made) == nil)
+        #expect(Git.parseCheckout("/r/.git\n/r/.git\nHEAD\n")?.branch == nil)
+    }
+
     /// A repository with one commit on `main` and a linked worktree on `worktree-a`.
     private static func repositoryWithWorktree() throws -> (made: URL, main: URL, worktree: URL) {
         let made = FileManager.default.temporaryDirectory.appendingPathComponent("claude-code-light-\(UUID().uuidString)")
