@@ -351,7 +351,7 @@ final class ClaudeCodeLights {
     /// Starts or stops following `window`, as its color becomes or stops being `auto`.
     func follow(_ window: TerminalWindow) {
         let id = ObjectIdentifier(window)
-        if window.tabColor == .auto {
+        if window.tabColor.followsClaudeCode {
             windows[id] = WeakWindow(window: window)
         } else {
             windows[id] = nil
@@ -409,7 +409,7 @@ final class ClaudeCodeLights {
     // MARK: Terminals
 
     private func rescan() {
-        windows = windows.filter { $0.value.window?.tabColor == .auto }
+        windows = windows.filter { $0.value.window?.tabColor.followsClaudeCode == true }
         pids = windows.mapValues { entry in
             let surfaces = entry.window?.terminalController?.surfaceTree.root?.leaves() ?? []
             return surfaces.compactMap { $0.surfaceModel?.foregroundPID }

@@ -399,7 +399,7 @@ private struct TabSidebarTabRow: View {
                     .frame(minHeight: 16)
                     .background(Capsule().fill(foreground.opacity(0.18)))
             } else if let state = tab.claudeCodeState {
-                TabSidebarClaudeCodeStatus(state: state, activity: tab.claudeCodeActivity)
+                TabSidebarClaudeCodeStatus(state: state, activity: tab.claudeCodeActivity, tint: symbolTint)
             }
         }
         .font(tab.isSelected ? TabSidebarStyle.titleFont.weight(.semibold) : TabSidebarStyle.titleFont)
@@ -412,9 +412,9 @@ private struct TabSidebarTabRow: View {
         .opacity(recedes ? 0.7 : 1)
         .animation(.easeOut(duration: 0.15), value: recedes)
         .overlay {
-            if tab.isSelected && tabColor == nil {
+            if tab.isSelected, let outline {
                 RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                    .strokeBorder(outline, lineWidth: 1)
             }
         }
         .overlay(alignment: .leading) { groupMarker }
@@ -459,25 +459,75 @@ private struct TabSidebarTabRow: View {
         }
     }
 
-    private var background: Color {
-        if let tabColor {
-            // Colored tabs are filled with their color: fully when selected, and
-            // lighter otherwise so the selected tab stands out.
-            let opacity = tab.isSelected ? 1.0 : (isHovering ? 0.55 : 0.4)
-            return Color(nsColor: tabColor).opacity(opacity)
-        }
+    /// How the row shows its color.
+    private enum Fill {
+        /// A color picked by hand, filling the row.
+        case solid(NSColor)
 
-        if tab.isSelected { return Color.primary.opacity(0.14) }
-        if isHovering { return Color.primary.opacity(0.06) }
-        return .clear
+        /// What the session is doing, as a pastel tint, so a column of them stays calm.
+        case pastel(NSColor)
+
+        /// No color.
+        case none
+    }
+
+    private var fill: Fill {
+        guard let tabColor else { return .none }
+        switch tab.assignedColor {
+        case .auto:
+            return .pastel(tabColor)
+        case .attention:
+            // Only a session that needs something is filled.
+            switch tab.claudeCodeState?.light {
+            case .waiting, .pending, .unlanded: return .pastel(tabColor)
+            case .working, .clean, nil: return .none
+            }
+        default:
+            return .solid(tabColor)
+        }
+    }
+
+    private var background: Color {
+        switch fill {
+        case .solid(let color):
+            // Fully when selected, and lighter otherwise so the selected tab stands out.
+            let opacity = tab.isSelected ? 1.0 : (isHovering ? 0.55 : 0.4)
+            return Color(nsColor: color).opacity(opacity)
+
+        case .pastel(let color):
+            let pastel = color.blended(withFraction: 0.35, of: .white) ?? color
+            let opacity = tab.isSelected ? 0.3 : (isHovering ? 0.22 : 0.14)
+            return Color(nsColor: pastel).opacity(opacity)
+
+        case .none:
+            if tab.isSelected { return Color.primary.opacity(0.14) }
+            if isHovering { return Color.primary.opacity(0.06) }
+            return .clear
+        }
+    }
+
+    /// The border of the selected row. A solid row stands out by its fill alone.
+    private var outline: Color? {
+        switch fill {
+        case .solid: return nil
+        case .pastel(let color): return Color(nsColor: color).opacity(0.6)
+        case .none: return Color.primary.opacity(0.08)
+        }
     }
 
     private var foreground: Color {
-        if let tabColor, tab.isSelected {
-            return Color(nsColor: tabColor.isLightColor ? .black : .white)
+        if case .solid(let color) = fill, tab.isSelected {
+            return Color(nsColor: color.isLightColor ? .black : .white)
         }
 
         return tab.isSelected ? .primary : .primary.opacity(0.8)
+    }
+
+    /// A row following its session colors the status symbol at full strength, since its
+    /// fill is faint or missing.
+    private var symbolTint: Color? {
+        guard tab.assignedColor.followsClaudeCode else { return nil }
+        return tabColor.map { Color(nsColor: $0) }
     }
 
     @ViewBuilder
@@ -570,13 +620,22 @@ private struct TabSidebarUnseenDot: View {
 private struct TabSidebarClaudeCodeStatus: View {
     let state: ClaudeCodeTabState
     let activity: ClaudeCodeActivity
+    let tint: Color?
 
     var body: some View {
+        // A session found already done says nothing more than its color does.
+        if state.light != .clean || activity.stoppedSince != nil {
+            status
+        }
+    }
+
+    private var status: some View {
         // Only a working session counts seconds.
         TimelineView(.periodic(from: .now, by: state.light == .working ? 1 : 30)) { context in
             HStack(spacing: 3) {
                 Image(systemName: symbol)
                     .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(tint ?? Color.primary)
                 if let text = text(at: context.date) {
                     Text(text)
                         .font(.system(size: 11))

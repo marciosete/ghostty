@@ -17,12 +17,21 @@ enum TerminalTabColor: Int, CaseIterable, Codable {
     /// Added last so the raw values of colors saved before it don't move.
     case auto
 
+    /// Follows the Claude Code session like `auto`, but only fills the tab while the
+    /// session needs something: an answer, a commit or landing.
+    case attention
+
     /// The colors a tab can be given. The traffic-light colors that `auto` shows are left
     /// out, so a color picked by hand is never mistaken for a session's state.
-    static let tabChoices: [TerminalTabColor] = [.auto, .none, .purple, .pink, .orange, .graphite]
+    static let tabChoices: [TerminalTabColor] = [.auto, .attention, .none, .purple, .pink, .orange, .graphite]
 
-    /// The colors a group can be given. A group runs no session, so it can't be `auto`.
-    static let groupChoices: [TerminalTabColor] = tabChoices.filter { $0 != .auto }
+    /// The colors a group can be given. A group runs no session, so it can't follow one.
+    static let groupChoices: [TerminalTabColor] = tabChoices.filter { !$0.followsClaudeCode }
+
+    /// Whether the tab shows what its Claude Code session is doing.
+    var followsClaudeCode: Bool {
+        self == .auto || self == .attention
+    }
 
     /// Whether this is one of the colors `auto` uses to show a session's state.
     var isTrafficLight: Bool {
@@ -53,6 +62,8 @@ enum TerminalTabColor: Int, CaseIterable, Codable {
             return "Graphite"
         case .auto:
             return "Auto"
+        case .attention:
+            return "Attention"
         }
     }
 
@@ -82,7 +93,7 @@ enum TerminalTabColor: Int, CaseIterable, Codable {
             }
         case .graphite:
             return .systemGray
-        case .auto:
+        case .auto, .attention:
             return nil
         }
     }
@@ -95,6 +106,8 @@ enum TerminalTabColor: Int, CaseIterable, Codable {
 
             if self == .auto {
                 Self.drawTrafficLight(in: circleRect)
+            } else if self == .attention {
+                Self.drawTrafficLight(in: circleRect, ring: true)
             } else if let fillColor = self.displayColor {
                 fillColor.setFill()
                 circlePath.fill()
@@ -126,19 +139,33 @@ enum TerminalTabColor: Int, CaseIterable, Codable {
         }
     }
 
-    /// A circle cut into the four colors `auto` switches between.
-    private static func drawTrafficLight(in rect: NSRect) {
+    /// A circle cut into the colors `auto` switches between. As a ring, for `attention`,
+    /// which leaves most tabs empty.
+    private static func drawTrafficLight(in rect: NSRect, ring: Bool = false) {
         let center = NSPoint(x: rect.midX, y: rect.midY)
-        let radius = rect.width / 2
-        for (index, light) in ClaudeCodeLight.allCases.enumerated() {
+        let lights = ClaudeCodeLight.allCases
+        let sweep = 360 / CGFloat(lights.count)
+        let lineWidth: CGFloat = 3
+        for (index, light) in lights.enumerated() {
             guard let color = light.tabColor.displayColor else { continue }
-            let start = 90 - CGFloat(index) * 90
+            let start = 90 - CGFloat(index) * sweep
             let slice = NSBezierPath()
-            slice.move(to: center)
-            slice.appendArc(withCenter: center, radius: radius, startAngle: start - 90, endAngle: start)
-            slice.close()
-            color.setFill()
-            slice.fill()
+            if ring {
+                slice.appendArc(
+                    withCenter: center,
+                    radius: rect.width / 2 - lineWidth / 2,
+                    startAngle: start - sweep,
+                    endAngle: start)
+                slice.lineWidth = lineWidth
+                color.setStroke()
+                slice.stroke()
+            } else {
+                slice.move(to: center)
+                slice.appendArc(withCenter: center, radius: rect.width / 2, startAngle: start - sweep, endAngle: start)
+                slice.close()
+                color.setFill()
+                slice.fill()
+            }
         }
     }
 }
@@ -206,7 +233,7 @@ private struct TabColorSwatch: View {
     var body: some View {
         Button(action: action) {
             Group {
-                if color == .auto {
+                if color.followsClaudeCode {
                     Image(nsImage: color.swatchImage(selected: isSelected))
                 } else if color == .none {
                     Image(systemName: isSelected ? "circle.slash" : "circle")

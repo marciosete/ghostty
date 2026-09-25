@@ -102,6 +102,9 @@ struct ClaudeCodeLightTests {
         }
         #expect(TerminalTabColor.tabChoices.first == .auto)
         #expect(!TerminalTabColor.groupChoices.contains(.auto))
+        #expect(!TerminalTabColor.groupChoices.contains(.attention))
+        #expect(TerminalTabColor.attention.followsClaudeCode)
+        #expect(!TerminalTabColor.pink.followsClaudeCode)
         #expect(!TerminalTabColor.pink.isTrafficLight)
     }
 
@@ -109,6 +112,7 @@ struct ClaudeCodeLightTests {
         #expect(TerminalTabColor.none.rawValue == 0)
         #expect(TerminalTabColor.graphite.rawValue == 9)
         #expect(TerminalTabColor.auto.rawValue == 10)
+        #expect(TerminalTabColor.attention.rawValue == 11)
     }
 
     // MARK: Edited files

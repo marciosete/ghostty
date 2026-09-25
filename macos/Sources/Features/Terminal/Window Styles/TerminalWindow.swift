@@ -102,7 +102,7 @@ class TerminalWindow: NSWindow {
     /// The color the tab is shown in: the one assigned to it, or for `auto`, the color of
     /// what its Claude Code session is doing.
     var shownTabColor: TerminalTabColor {
-        guard tabColor == .auto else { return tabColor }
+        guard tabColor.followsClaudeCode else { return tabColor }
         return claudeCodeState?.light.tabColor ?? .none
     }
 
