@@ -360,7 +360,11 @@ private struct TabSidebarTabRow: View {
             titleLine
 
             if isExtended && !isEditing {
-                locationLine
+                HStack(spacing: 6) {
+                    locationLine
+                    Spacer(minLength: 0)
+                    speakerButton
+                }
             }
         }
         .font(tab.isSelected ? titleFont.weight(.semibold) : titleFont)
@@ -449,18 +453,9 @@ private struct TabSidebarTabRow: View {
 
             Spacer(minLength: 0)
 
-            if tab.canSpeak && !isEditing {
-                Button {
-                    if let window = tab.window { ClaudeCodeSpeaker.shared.toggle(window) }
-                } label: {
-                    Image(systemName: tab.isSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
-                        .font(.system(size: 10, weight: .medium))
-                        .frame(width: 16, height: 16)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .opacity(tab.isSpeaking ? 1 : 0.6)
-                .help(tab.isSpeaking ? "Stop Reading" : "Read Last Response Aloud")
+            // An extended row has it at the end of its second line instead.
+            if !isExtended && !isEditing {
+                speakerButton
             }
 
             // Only one of these shows at a time, but all of them take their space, so the
@@ -493,6 +488,24 @@ private struct TabSidebarTabRow: View {
                 .allowsHitTesting(showsClose)
                 .help("Close Session")
             }
+        }
+    }
+
+    /// Reads the session's last response aloud, or stops reading it.
+    @ViewBuilder
+    private var speakerButton: some View {
+        if tab.canSpeak {
+            Button {
+                if let window = tab.window { ClaudeCodeSpeaker.shared.toggle(window) }
+            } label: {
+                Image(systemName: tab.isSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(tab.isSpeaking ? 1 : 0.6)
+            .help(tab.isSpeaking ? "Stop Reading" : "Read Last Response Aloud")
         }
     }
 
