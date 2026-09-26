@@ -191,6 +191,13 @@ final class TabSidebarModel: ObservableObject {
         }
     }
 
+    /// Refreshes right away instead of on the next main loop turn. A window that is
+    /// about to be shown for the first time uses this so its first frame already lists
+    /// the tabs instead of showing an empty sidebar that fills in a moment later.
+    func refreshNow() {
+        refresh()
+    }
+
     private func refresh() {
         refreshScheduled = false
 
@@ -496,6 +503,10 @@ final class TabSidebarModel: ObservableObject {
         if let groupID {
             UserTabGroupStore.shared.update(groupID) { $0.isCollapsed = false }
         }
+
+        // The group changed after the new tab was prepared, so the sidebar it shows
+        // first would still list it under the old group.
+        window.prepareTabSidebarForDisplay()
 
         // The tab group takes a main loop turn to settle after adding a tab.
         DispatchQueue.main.async { [weak self] in self?.normalizeOrder() }

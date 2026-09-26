@@ -135,6 +135,16 @@ extension TerminalWindow {
         }
     }
 
+    /// Brings the sidebar up to date and lays out the window before it is first shown,
+    /// so a new tab replaces the selected one in a single frame: the sidebar already
+    /// lists every tab and the terminal already has its final size.
+    func prepareTabSidebarForDisplay() {
+        guard isTabSidebarActive else { return }
+        syncTabSidebarTitlebarHeight()
+        tabSidebarModel.refreshNow()
+        contentView?.layoutSubtreeIfNeeded()
+    }
+
     func postTabSidebarItemDidChange() {
         NotificationCenter.default.post(name: .terminalTabSidebarItemDidChange, object: self)
     }

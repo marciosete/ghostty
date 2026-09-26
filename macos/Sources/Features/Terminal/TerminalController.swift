@@ -494,6 +494,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 // set while `-[NSWindowController showWindow:]` is called, but we're
                 // dispatching it to resolve other issues.
                 parent.tabGroup?.selectedWindow = window
+
+                // Label the tabs and fill in the sidebar before the new tab is drawn,
+                // so switching to it happens in one frame without the sidebar or the
+                // shortcut labels filling in afterwards.
+                controller.relabelTabs()
+                (window as? TerminalWindow)?.prepareTabSidebarForDisplay()
             }
         }
 
