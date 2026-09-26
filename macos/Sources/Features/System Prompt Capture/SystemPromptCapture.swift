@@ -4,13 +4,13 @@ import OSLog
 
 /// Saves the requests Claude Code sends to the model, system prompt and all, exactly as the
 /// API receives them. It is off until turned on, and then applies to terminals opened
-/// afterwards: they get `ANTHROPIC_BASE_URL` set to a local proxy, which saves every request
-/// it passes on to disk.
+/// afterwards: they get `ANTHROPIC_BASE_URL` set to a local proxy, which keeps a folder per
+/// session with the latest request of each of its threads.
 ///
 /// Once started the proxy runs until Ghostty quits, since terminals opened while capturing
 /// keep sending their requests to it after capturing is turned off. It stops saving then.
 final class SystemPromptCapture {
-    static let shared = SystemPromptCapture()
+    static let shared = SystemPromptCapture(sessionName: SystemPromptCapture.tabName(ofSession:))
 
     private static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.mitchellh.ghostty",
@@ -39,11 +39,19 @@ final class SystemPromptCapture {
     /// Saves requests in the order they came in.
     private let writeQueue = DispatchQueue(label: "com.mitchellh.ghostty.system-prompt-capture")
 
-    /// Keeps apart requests sent within the same millisecond.
-    private var sequence = 0
+    /// Sorts each session's requests into threads, by session ID. Only touched on
+    /// `writeQueue`.
+    private var routers: [String: CaptureRouter] = [:]
 
-    init(directory: URL = SystemPromptCapture.defaultDirectory) {
+    /// The name of the tab running a session, by the session's ID. Called on the main queue.
+    private let sessionName: (String) -> String?
+
+    init(
+        directory: URL = SystemPromptCapture.defaultDirectory,
+        sessionName: @escaping (String) -> String? = { _ in nil }
+    ) {
         self.directory = directory
+        self.sessionName = sessionName
     }
 
     /// The variables that send a new terminal's Claude Code requests through the proxy.
@@ -77,11 +85,13 @@ final class SystemPromptCapture {
     }
 
     private func record(_ request: ProxyRequest) {
-        guard saving.withLock({ isSaving }) else { return }
-        let capturedAt = Date()
+        guard saving.withLock({ isSaving }), !request.body.isEmpty else { return }
         writeQueue.async { [self] in
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]
+            let id = Self.sessionID(of: request, body: body)
+            let name = id.flatMap { id in DispatchQueue.main.sync { sessionName(id) } }
             do {
-                try save(request, capturedAt: capturedAt)
+                try save(request, body: body, sessionID: id, sessionName: name)
             } catch {
                 Self.logger.error("couldn't save a request: \(error.localizedDescription, privacy: .public)")
             }
@@ -91,27 +101,69 @@ final class SystemPromptCapture {
     /// Headers that carry the account's credentials. Their values aren't written to disk.
     static let credentialHeaders: Set<String> = ["authorization", "x-api-key", "proxy-authorization", "cookie"]
 
-    /// Writes the request's body byte for byte as it goes to the API, and its request line
-    /// and headers next to it, credentials masked. Names start with the time to the
-    /// millisecond, so the files sort in the order the requests were sent.
-    func save(_ request: ProxyRequest, capturedAt: Date) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd'T'HHmmss.SSS"
-        let path = request.path.split(separator: "/").joined(separator: "-")
-        sequence += 1
-        let base = [
-            formatter.string(from: capturedAt), String(sequence), request.method, path.isEmpty ? "root" : path,
-        ].joined(separator: "-")
+    /// Claude Code sends the ID of its session in a header, and in the request's metadata.
+    static func sessionID(of request: ProxyRequest, body: [String: Any]?) -> String? {
+        if let id = request.header("X-Claude-Code-Session-Id"), !id.isEmpty { return id.lowercased() }
+        guard let metadata = body?["metadata"] as? [String: Any],
+              let userID = (metadata["user_id"] as? String)?.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: userID)) as? [String: Any] else { return nil }
+        return (object["session_id"] as? String)?.lowercased()
+    }
 
-        try Data(request.head(redacting: Self.credentialHeaders).utf8)
-            .write(to: directory.appendingPathComponent(base + ".http"), options: .atomic)
-        if !request.body.isEmpty {
-            let isJSON = request.header("Content-Type")?.contains("json") ?? false
-            try request.body
-                .write(to: directory.appendingPathComponent(base + (isJSON ? ".json" : ".body")), options: .atomic)
+    /// Brings the folder of the request's thread up to date with it: the request as it
+    /// was sent, in `request.json` and `request.http` (credentials masked), and laid out
+    /// for reading beside them. Only files whose content changed are written, so each
+    /// thread's folder holds its latest request.
+    func save(_ request: ProxyRequest, body: [String: Any]?, sessionID: String?, sessionName: String?) throws {
+        let session = try sessionFolder(id: sessionID, name: sessionName)
+        let thread: String
+        if let body {
+            thread = routers[sessionID ?? "", default: CaptureRouter()].folder(for: body, path: request.path)
+        } else {
+            thread = "side-calls/" + CaptureRouter.slug(request.path, words: 6)
         }
+        let folder = thread.isEmpty ? session : session.appendingPathComponent(thread)
+
+        var files: [String: Data] = [:]
+        if let body, body["messages"] != nil || body["system"] != nil {
+            let name = thread.isEmpty ? session.lastPathComponent : "\(session.lastPathComponent)/\(thread)"
+            files = RequestExploder.files(of: body, name: name, rawSize: request.body.count)
+        }
+        files[body == nil ? "request.body" : "request.json"] = request.body
+        files["request.http"] = Data(request.head(redacting: Self.credentialHeaders).utf8)
+
+        try CaptureFolder.sync(files, into: folder, keeping: thread.isEmpty ? ["agents", "side-calls"] : [])
+    }
+
+    /// The session's folder, `<tab name> (<start of the session ID>)`. The folder follows the
+    /// tab when it is renamed, and keeps its last name once the tab is gone.
+    private func sessionFolder(id: String?, name: String?) throws -> URL {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard let id else { return directory.appendingPathComponent("unknown session") }
+
+        let short = String(id.prefix(8))
+        let existing = (try? fileManager.contentsOfDirectory(atPath: directory.path))?
+            .first { $0 == short || $0.hasSuffix(" (\(short))") }
+        guard let name = name.map(Self.folderName), !name.isEmpty else {
+            return directory.appendingPathComponent(existing ?? short)
+        }
+
+        let wanted = "\(name) (\(short))"
+        let url = directory.appendingPathComponent(wanted)
+        if let existing, existing != wanted, !fileManager.fileExists(atPath: url.path) {
+            try fileManager.moveItem(at: directory.appendingPathComponent(existing), to: url)
+        }
+        return url
+    }
+
+    /// A tab name made safe for a folder name.
+    private static func folderName(_ name: String) -> String {
+        let safe = name
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(safe.drop { $0 == "." }.prefix(80))
     }
 
     func revealInFinder() {

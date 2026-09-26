@@ -83,6 +83,12 @@ struct ClaudeCodeSession: Codable, Equatable {
         registered(pid: pid, configDirectory: configDirectory)?.session.cwd
     }
 
+    /// The ID of the session process `pid` runs, if it is Claude Code, whether or not the
+    /// session has a transcript yet.
+    static func id(ofRunning pid: Int) -> UUID? {
+        registered(pid: pid, configDirectory: configDirectory)?.session.id
+    }
+
     /// The session of process `pid` and what it is doing, from its registry entry.
     static func activity(pid: Int) -> (session: ClaudeCodeSession, status: String)? {
         guard let (session, entry) = registered(pid: pid, configDirectory: configDirectory),
