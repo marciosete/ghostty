@@ -129,6 +129,7 @@ struct TabSidebarView: View {
                             placement: Binding(
                                 get: { dropAtEnd ? .before : nil },
                                 set: { dropAtEnd = $0 != nil })))
+                        .onReceive(TabSidebarDragState.shared.$endedDrags.dropFirst()) { _ in dropAtEnd = false }
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
@@ -348,6 +349,7 @@ private struct TabSidebarGroupHeader: View {
             target: .group(group.id),
             height: TabSidebarStyle.rowHeight,
             placement: $placement))
+        .onReceive(TabSidebarDragState.shared.$endedDrags.dropFirst()) { _ in placement = nil }
         .contextMenu { contextMenu }
     }
 
@@ -496,6 +498,7 @@ private struct TabSidebarTabRow: View {
             target: .tab(tab.window),
             height: height,
             placement: $placement))
+        .onReceive(TabSidebarDragState.shared.$endedDrags.dropFirst()) { _ in placement = nil }
         .contextMenu { contextMenu }
     }
 
@@ -722,17 +725,11 @@ private struct TabSidebarTabRow: View {
             TabSidebarColorMenu(title: "Session Color", choices: TerminalTabColor.tabChoices, selected: tab.assignedColor) { color in
                 model.setColor(color, for: window)
             }
+            // Every session reads with the same voice.
             Menu("Voice") {
                 ForEach(ElevenLabs.voices, id: \.id) { voice in
-                    let selected = (tab.speechVoiceID ?? ElevenLabs.defaultVoiceID) == voice.id
-                    Button {
-                        window.speechVoiceID = voice.id
-                    } label: {
-                        if selected {
-                            Label(voice.name, systemImage: "checkmark")
-                        } else {
-                            Text(voice.name)
-                        }
+                    Button(ElevenLabs.voiceID == voice.id ? "\(voice.name) ✓" : voice.name) {
+                        TerminalWindow.pickVoice(voice.id)
                     }
                 }
             }
@@ -1008,8 +1005,17 @@ enum TabSidebarDropPlacement {
 /// Tracks the tab being dragged. The drag pasteboard only carries a token; the window
 /// itself is looked up here once the token is verified, so an unrelated text drop can
 /// never move a tab.
-final class TabSidebarDragState {
+final class TabSidebarDragState: ObservableObject {
     static let shared = TabSidebarDragState()
+
+    /// Changed when a drag ends, however it ends. A drag let go outside the sidebar, or
+    /// cancelled, never tells the rows it last passed over, so they wait for this to
+    /// take down the line showing where it would have landed.
+    @Published private(set) var endedDrags = 0
+
+    /// How often a drag is checked for having ended.
+    private static let endCheckInterval: TimeInterval = 0.25
+    private var endCheck: Timer?
 
     /// What is dragged: a tab, or a group with all its tabs.
     enum Payload {
@@ -1040,7 +1046,26 @@ final class TabSidebarDragState {
         groupID = nil
         set(self)
         self.token = token
+        watchForEnd()
         return token
+    }
+
+    /// Ends the drag once the mouse button is up. The timer runs in the drag's own run
+    /// loop mode too.
+    private func watchForEnd() {
+        endCheck?.invalidate()
+        let timer = Timer(timeInterval: Self.endCheckInterval, repeats: true) { [weak self] _ in
+            guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
+            self?.end()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        endCheck = timer
+    }
+
+    private func end() {
+        endCheck?.invalidate()
+        endCheck = nil
+        endedDrags += 1
     }
 
     func take(token: String) -> Payload? {

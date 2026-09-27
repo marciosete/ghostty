@@ -131,6 +131,19 @@ struct ClaudeCodeLightTests {
         #expect(TerminalTabColor.attention.resolvingFollowing == .auto)
     }
 
+    @Test func everySessionReadsWithCharlieUntilAnotherVoiceIsPicked() {
+        let saved = UserDefaults.ghostty.object(forKey: ElevenLabs.voiceIDKey)
+        defer { UserDefaults.ghostty.set(saved, forKey: ElevenLabs.voiceIDKey) }
+
+        UserDefaults.ghostty.removeObject(forKey: ElevenLabs.voiceIDKey)
+        #expect(ElevenLabs.voiceName == "Charlie")
+        #expect(ElevenLabs.Voice.configured().id == ElevenLabs.defaultVoiceID)
+
+        ElevenLabs.voiceID = "FGY2WhTYpPnrIDTdsKH5"
+        #expect(ElevenLabs.voiceName == "Laura")
+        #expect(ElevenLabs.Voice.configured().id == "FGY2WhTYpPnrIDTdsKH5")
+    }
+
     @Test func savedColorsKeepTheirValues() {
         #expect(TerminalTabColor.none.rawValue == 0)
         #expect(TerminalTabColor.graphite.rawValue == 9)

@@ -166,9 +166,8 @@ final class ClaudeCodeSpeaker: NSObject {
         // The tab shows it is speaking from the click, since the audio takes a moment.
         speakingWindow = window
         window.isSpeakingClaudeCodeResponse = true
-        let voice = window.speechVoiceID
         reading = Task {
-            await read(pids: pids, voice: voice)
+            await read(pids: pids)
             guard !Task.isCancelled else { return }
             reading = nil
             player.stop()
@@ -195,7 +194,7 @@ final class ClaudeCodeSpeaker: NSObject {
         speakingWindow = nil
     }
 
-    private func read(pids: [Int], voice: String?) async {
+    private func read(pids: [Int]) async {
         let found = await Task.detached(priority: .userInitiated) { () -> (text: String, apiKey: String?)? in
             let text = pids.lazy
                 .compactMap { ClaudeCodeSession.running(pid: $0)?.transcript }
@@ -211,7 +210,7 @@ final class ClaudeCodeSpeaker: NSObject {
             return
         }
         if let apiKey = found.apiKey {
-            await readWithElevenLabs(found.text, voice: .configured(id: voice), apiKey: apiKey)
+            await readWithElevenLabs(found.text, voice: .configured(), apiKey: apiKey)
         } else {
             await speakWithSystemVoice(found.text)
         }

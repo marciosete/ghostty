@@ -20,6 +20,21 @@ enum ElevenLabs {
     /// Charlie: casual and upbeat, with an Australian accent.
     static let defaultVoiceID = "IKne3meq5aSn9XLyUdCD"
 
+    /// The voice every session reads with: the one last picked, Charlie until then.
+    static var voiceID: String {
+        get {
+            UserDefaults.ghostty.string(forKey: voiceIDKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultVoiceID
+        }
+        set {
+            UserDefaults.ghostty.set(newValue, forKey: voiceIDKey)
+        }
+    }
+
+    /// The name of the voice every session reads with, if it is one offered.
+    static var voiceName: String? {
+        voices.first { $0.id == voiceID }?.name
+    }
+
     /// The voices a session's tab offers.
     static let voices: [(name: String, id: String)] = [
         ("Charlie", "IKne3meq5aSn9XLyUdCD"),
@@ -44,12 +59,12 @@ enum ElevenLabs {
         let model: String
         let speed: Double
 
-        /// The voice picked for a session, or the one set for every session.
-        static func configured(id picked: String? = nil) -> Voice {
+        /// The voice every session reads with, and the model and speed set for them.
+        static func configured() -> Voice {
             let defaults = UserDefaults.ghostty
             let speed = defaults.double(forKey: speedKey)
             return Voice(
-                id: picked ?? defaults.string(forKey: voiceIDKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultVoiceID,
+                id: ElevenLabs.voiceID,
                 model: defaults.string(forKey: modelIDKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultModelID,
                 speed: (0.7...1.2).contains(speed) ? speed : defaultSpeed)
         }

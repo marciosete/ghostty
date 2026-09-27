@@ -141,7 +141,18 @@ class TerminalWindow: NSWindow {
         }
     }
 
-    /// The ElevenLabs voice picked for this tab's session, or nil for the default.
+    /// Picks the voice every session reads with. A voice picked for one session before
+    /// every session shared one is forgotten.
+    static func pickVoice(_ id: String) {
+        ElevenLabs.voiceID = id
+        for case let window as TerminalWindow in NSApp.windows {
+            window.speechVoiceID = nil
+            window.postTabSidebarItemDidChange()
+        }
+    }
+
+    /// The ElevenLabs voice once picked for this tab's session alone. Every session now
+    /// reads with `ElevenLabs.voiceID`; this is kept only so older saved state reads.
     var speechVoiceID: String? {
         didSet {
             guard speechVoiceID != oldValue else { return }
@@ -362,8 +373,8 @@ class TerminalWindow: NSWindow {
     }
 
     @objc fileprivate func pickVoiceFromContextMenu(_ sender: NSMenuItem) {
-        guard let (window, voiceID) = sender.representedObject as? (TerminalWindow, String) else { return }
-        window.speechVoiceID = voiceID
+        guard let (_, voiceID) = sender.representedObject as? (TerminalWindow, String) else { return }
+        Self.pickVoice(voiceID)
     }
 
     @objc fileprivate func landFromContextMenu(_ sender: NSMenuItem) {
@@ -1066,7 +1077,7 @@ extension TerminalWindow {
             voiceItem.identifier = Self.voiceMenuItemIdentifier
             voiceItem.setImageIfDesired(systemSymbolName: "speaker.wave.2")
             let voices = NSMenu()
-            let selected = window.speechVoiceID ?? ElevenLabs.defaultVoiceID
+            let selected = ElevenLabs.voiceID
             for voice in ElevenLabs.voices {
                 let item = NSMenuItem(
                     title: voice.name,
