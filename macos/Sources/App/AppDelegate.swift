@@ -232,6 +232,10 @@ class AppDelegate: NSObject,
         // Initial config loading
         ghosttyConfigDidChange(config: ghostty.config)
 
+        // Time the replies of the Claude Code sessions. Started before any terminal opens,
+        // so every terminal gets the proxy's address.
+        ClaudeStreams.shared.start()
+
         // Add the tab sidebar items to the View menu.
         installTabSidebarMenuItems()
 

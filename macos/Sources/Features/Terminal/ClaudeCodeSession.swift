@@ -108,6 +108,24 @@ struct ClaudeCodeSession: Codable, Equatable {
         configDirectory.appendingPathComponent("sessions")
     }
 
+    /// The process running the session `id` interactively, from the registry, or nil when
+    /// no running process has registered it.
+    static func registeredPID(ofSession id: UUID) -> Int? {
+        registeredPID(ofSession: id, configDirectory: configDirectory)
+    }
+
+    static func registeredPID(ofSession id: UUID, configDirectory: URL) -> Int? {
+        let directory = configDirectory.appendingPathComponent("sessions")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        for name in names where name.hasSuffix(".json") {
+            guard let pid = Int(name.dropLast(".json".count)),
+                  let (session, _) = registered(pid: pid, configDirectory: configDirectory),
+                  session.id == id else { continue }
+            return pid
+        }
+        return nil
+    }
+
     /// The transcript of the session, if it has one yet.
     var transcript: URL? {
         transcript(in: Self.configDirectory)

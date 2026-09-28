@@ -45,7 +45,10 @@ extension AppDelegate {
         viewMenu.insertItem(searchSessions, at: 2)
         viewMenu.insertItem(toggleSourceControl, at: 3)
         viewMenu.insertItem(toggleUsage, at: 4)
-        viewMenu.insertItem(.separator(), at: 5)
+        MainActor.assumeIsolated {
+            ClaudeStreams.shared.installMenuItem(in: viewMenu, at: 5)
+        }
+        viewMenu.insertItem(.separator(), at: 6)
 
         let captureSystemPrompts = NSMenuItem(
             title: "Capture Claude Code Requests",
@@ -56,9 +59,9 @@ extension AppDelegate {
             action: #selector(AppDelegate.showCapturedSystemPrompts(_:)),
             keyEquivalent: "")
 
-        viewMenu.insertItem(captureSystemPrompts, at: 6)
-        viewMenu.insertItem(showSystemPrompts, at: 7)
-        viewMenu.insertItem(.separator(), at: 8)
+        viewMenu.insertItem(captureSystemPrompts, at: 7)
+        viewMenu.insertItem(showSystemPrompts, at: 8)
+        viewMenu.insertItem(.separator(), at: 9)
     }
 
     /// Takes effect in terminals opened afterwards.

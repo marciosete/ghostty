@@ -53,4 +53,35 @@ struct TerminalWindowTitleTests {
         #expect(BaseTerminalController.named("◑ Hardening", claudeCodeStatus: "✳") == "✳ Hardening")
         #expect(BaseTerminalController.named("◑ Hardening", claudeCodeStatus: nil) == "Hardening")
     }
+
+    @Test func showsTheLatestReplyAfterTheTitle() {
+        let group = UserTabGroupStore.shared.create(name: "Ghostty")
+        defer { UserTabGroupStore.shared.remove(group.id) }
+        let wasEnabled = ClaudeStreams.shared.isEnabled
+        defer { ClaudeStreams.shared.isEnabled = wasEnabled }
+        ClaudeStreams.shared.isEnabled = true
+
+        let window = window()
+        window.sessionTitle = "Fix the usage panel"
+        window.userTabGroupID = group.id
+
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        var sample = ClaudeStreamSample(startedAt: start)
+        sample.firstTokenAt = start + 1.5
+        sample.lastTokenAt = start + 8.2
+        sample.outputTokens = 456
+        sample.finishedAt = start + 8.2
+        window.claudeStreamState = ClaudeStreamState(sample: sample, asOf: start + 9)
+        #expect(window.title == "Ghostty › Fix the usage panel — ttft 1.5s · avg 68 tok/s")
+        #expect(window.tab.title == "Fix the usage panel", "the tab keeps the session's title")
+
+        // Turning replies off drops the readout at once.
+        ClaudeStreams.shared.isEnabled = false
+        #expect(window.title == "Ghostty › Fix the usage panel")
+        ClaudeStreams.shared.isEnabled = true
+        #expect(window.title == "Ghostty › Fix the usage panel — ttft 1.5s · avg 68 tok/s")
+
+        window.claudeStreamState = nil
+        #expect(window.title == "Ghostty › Fix the usage panel")
+    }
 }

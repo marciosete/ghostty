@@ -65,8 +65,13 @@ final class SystemPromptCapture {
         saving.withLock { isSaving = enabled }
         guard enabled, proxy == nil else { return }
 
-        // Chain onto a base URL Ghostty was itself started with, such as a gateway.
-        let upstream = ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"] ?? "https://api.anthropic.com"
+        // Chain onto the proxy that times replies when it runs, so a captured terminal's
+        // replies are still timed, and otherwise onto a base URL Ghostty was itself started
+        // with, such as a gateway.
+        let timingProxy = MainActor.assumeIsolated { ClaudeStreams.shared.proxy?.baseURL }
+        let upstream = timingProxy
+            ?? ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"]
+            ?? "https://api.anthropic.com"
         let proxy = SystemPromptProxy(upstream: upstream) { [weak self] request in
             self?.record(request)
         }

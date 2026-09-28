@@ -391,7 +391,10 @@ extension Ghostty {
 
             // Setup our surface. This will also initialize all the terminal IO.
             var surface_cfg = baseConfig ?? SurfaceConfiguration()
+            // Claude Code in the new terminal talks to the API through the proxy that times
+            // its replies, behind the capture proxy while requests are captured.
             surface_cfg.environmentVariables.merge(SystemPromptCapture.shared.environment) { current, _ in current }
+            ClaudeStreams.shared.addEnvironment(to: &surface_cfg)
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }
