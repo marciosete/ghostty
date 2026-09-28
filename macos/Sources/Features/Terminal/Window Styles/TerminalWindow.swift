@@ -25,6 +25,18 @@ class TerminalWindow: NSWindow {
     /// Update notification UI in titlebar
     private let updateAccessory = NSTitlebarAccessoryViewController()
 
+    /// The timing of the Claude Code session's latest reply, at the right of the titlebar.
+    /// A slot of its own, so it isn't cut off with the title when the title is long.
+    private let replySpeedAccessory = NSTitlebarAccessoryViewController()
+    private lazy var replySpeedLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byClipping
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+
     /// Visual indicator that mirrors the selected tab color.
     private lazy var tabColorIndicator: NSHostingView<TabColorIndicatorView> = {
         let view = NSHostingView(rootView: TabColorIndicatorView(tabColor: shownTabColor, claudeCodeState: claudeCodeState))
@@ -283,6 +295,21 @@ class TerminalWindow: NSWindow {
                 }))
             addTitlebarAccessoryViewController(resetZoomAccessory)
             resetZoomAccessory.view.translatesAutoresizingMaskIntoConstraints = false
+
+            let replySpeedView = NSView()
+            replySpeedView.translatesAutoresizingMaskIntoConstraints = false
+            replySpeedView.addSubview(replySpeedLabel)
+            NSLayoutConstraint.activate([
+                replySpeedLabel.leadingAnchor.constraint(equalTo: replySpeedView.leadingAnchor, constant: 4),
+                replySpeedLabel.trailingAnchor.constraint(equalTo: replySpeedView.trailingAnchor, constant: -8),
+                replySpeedLabel.centerYAnchor.constraint(equalTo: replySpeedView.centerYAnchor),
+                replySpeedView.heightAnchor.constraint(equalTo: replySpeedLabel.heightAnchor, constant: 8),
+            ])
+            replySpeedAccessory.layoutAttribute = .right
+            replySpeedAccessory.view = replySpeedView
+            replySpeedAccessory.isHidden = true
+            addTitlebarAccessoryViewController(replySpeedAccessory)
+            updateReplySpeedAccessory()
 
             // Create update notification accessory
             if supportsUpdateAccessory {
@@ -597,18 +624,14 @@ class TerminalWindow: NSWindow {
     private var groupNamesCancellable: AnyCancellable?
 
     /// Sets the window's title to the session's title, after its group's name if it's in
-    /// a group, and before the timing of its Claude Code session's latest reply. `groups`
-    /// is passed while the store is about to change to it.
+    /// a group. `groups` is passed while the store is about to change to it.
     private func applySessionTitle(groups: [UUID: UserTabGroup] = UserTabGroupStore.shared.groups) {
         guard let sessionTitle else { return }
-        var title = sessionTitle
         if let groupName = userTabGroupID.flatMap({ groups[$0]?.name }), !groupName.isEmpty {
-            title = "\(groupName) › \(title)"
+            title = "\(groupName) › \(sessionTitle)"
+        } else {
+            title = sessionTitle
         }
-        if let readout = claudeStreamReadout {
-            title += " — \(readout)"
-        }
-        self.title = title
     }
 
     /// What the titlebar shows of the latest reply, while replies are shown.
@@ -617,10 +640,22 @@ class TerminalWindow: NSWindow {
         return claudeStreamState?.label
     }
 
-    /// Replies were turned on or off: the titlebar shows or drops the readout.
+    /// Replies were turned on or off, or the timing changed: the titlebar's readout follows.
     func claudeStreamDisplayDidChange() {
-        applySessionTitle()
+        updateReplySpeedAccessory()
         postTabSidebarItemDidChange()
+    }
+
+    private func updateReplySpeedAccessory() {
+        guard replySpeedAccessory.view != nil else { return }
+        if let readout = claudeStreamReadout {
+            replySpeedLabel.stringValue = readout
+            replySpeedLabel.toolTip = claudeStreamState?.help
+            replySpeedAccessory.isHidden = false
+        } else {
+            replySpeedLabel.stringValue = ""
+            replySpeedAccessory.isHidden = true
+        }
     }
 
     override var title: String {
