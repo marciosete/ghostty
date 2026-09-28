@@ -241,6 +241,9 @@ private final class ProxyConnection {
         var request: ClaudeStreamRequest?
         var tracker: ClaudeStreamTracker?
 
+        /// When the reply's timing was last reported while it streamed.
+        var lastReportAt: Date?
+
         init(head: HTTPRequestHead) {
             self.head = head
         }
@@ -250,6 +253,10 @@ private final class ProxyConnection {
 
     /// A request body larger than this can't be Claude Code's; the connection is dropped.
     private static let maximumBodySize = 256 << 20
+
+    /// How often a streaming reply's timing is reported at most. Content arrives more often
+    /// than the display changes.
+    private static let reportInterval: TimeInterval = 0.1
 
     init(_ connection: NWConnection, proxy: ClaudeStreamProxy) {
         self.connection = connection
@@ -411,8 +418,16 @@ private final class ProxyConnection {
         guard case .forwarding(let forward) = state, forward.wroteHead, !forward.bodyless else { return }
         send(Data(String(data.count, radix: 16).utf8) + Data("\r\n".utf8) + data + Data("\r\n".utf8))
 
-        if forward.tracker != nil {
-            forward.tracker?.feed(data, at: Date())
+        guard forward.tracker != nil else { return }
+        let now = Date()
+        let hadFirstToken = forward.tracker?.sample.firstTokenAt != nil
+        forward.tracker?.feed(data, at: now)
+
+        // The first token, the end, and then at most every so often.
+        let sample = forward.tracker?.sample
+        let due = forward.lastReportAt.map { now.timeIntervalSince($0) >= Self.reportInterval } ?? true
+        if (sample?.firstTokenAt != nil && !hadFirstToken) || sample?.isStreaming == false || due {
+            forward.lastReportAt = now
             report(forward)
         }
     }

@@ -191,12 +191,17 @@ final class ClaudeStreams: NSObject, ObservableObject {
         // A turn that started later replaces the one shown; one that finished later doesn't
         // take over from a turn that's still streaming.
         guard session.request.id == request.id || sample.startedAt >= session.sample.startedAt else { return }
-        let wasStreaming = session.request.id != request.id || session.sample.isStreaming
+        let isNewTurn = sessions[sessionID] == nil || session.request.id != request.id
+        let wasStreaming = isNewTurn || session.sample.isStreaming
         session.request = request
         session.sample = sample
         sessions[sessionID] = session
 
-        show(sessionID)
+        // Content arrives many times a second; the title is redrawn at the ticker's pace
+        // instead, and at once only when a turn starts or ends.
+        if isNewTurn || !sample.isStreaming {
+            show(sessionID)
+        }
         updateTicker()
 
         if wasStreaming, !sample.isStreaming {
