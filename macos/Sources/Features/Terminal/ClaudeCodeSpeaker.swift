@@ -11,6 +11,32 @@ enum ClaudeCodeResponse {
 
     /// The text of the last response in the transcript at `url`.
     static func last(inTranscript url: URL) -> String? {
+        tailLines(ofTranscript: url).flatMap(last(inLines:))
+    }
+
+    /// The model that wrote the last response in the transcript at `url`, which is the
+    /// model the session is using.
+    static func model(inTranscript url: URL) -> String? {
+        tailLines(ofTranscript: url).flatMap(model(inLines:))
+    }
+
+    /// The model of the last message in transcript lines that a model wrote for the
+    /// session itself, not for a subagent.
+    static func model(inLines lines: [Data]) -> String? {
+        for line in lines.reversed() {
+            guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  entry["type"] as? String == "assistant",
+                  entry["isSidechain"] as? Bool != true,
+                  let message = entry["message"] as? [String: Any],
+                  let model = message["model"] as? String, !model.isEmpty,
+                  model != UsageTranscripts.syntheticModel else { continue }
+            return model
+        }
+        return nil
+    }
+
+    /// The whole lines at the end of the transcript at `url`.
+    private static func tailLines(ofTranscript url: URL) -> [Data]? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
 
@@ -22,7 +48,7 @@ enum ClaudeCodeResponse {
         var lines = data.split(separator: UInt8(ascii: "\n")).map { Data($0) }
         // Reading from the middle of the file starts partway through a line.
         if start > 0, !lines.isEmpty { lines.removeFirst() }
-        return last(inLines: lines)
+        return lines
     }
 
     /// The text of the last response in transcript lines. Claude Code writes each block of

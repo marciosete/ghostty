@@ -149,8 +149,8 @@ private struct TabSidebarHoverCardBackground: NSViewRepresentable {
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
-/// What the card says about a session: its title, what its Claude Code is doing, where it
-/// works, and the tokens and cost of each model it used.
+/// What the card says about a session: its title, what its Claude Code is doing, the model
+/// it is using, where it works, and the tokens and cost of each model it used.
 struct TabSidebarHoverCardView: View {
     let tab: TabSidebarModel.Tab
     let info: TabSidebarSessionInfo?
@@ -159,6 +159,9 @@ struct TabSidebarHoverCardView: View {
     /// Nil while it is being added up.
     @State private var usage: [ClaudeCodeSessionCost.ModelUsage]?
     @State private var usageRead = false
+
+    /// The model of the session's last response, once the transcript is read.
+    @State private var model: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -170,6 +173,10 @@ struct TabSidebarHoverCardView: View {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     row(state.light.symbolName, state.summary(tab.claudeCodeActivity, lastActive: info?.lastActive, at: context.date), tint: tint)
                 }
+            }
+
+            if let model {
+                row("cpu", Self.shortName(model))
             }
 
             if let info {
@@ -192,7 +199,10 @@ struct TabSidebarHoverCardView: View {
             }
         }
         .font(.system(size: 12))
-        .onAppear(perform: loadUsage)
+        .onAppear {
+            loadModel()
+            loadUsage()
+        }
     }
 
     /// A row per model, and their total when there are several.
@@ -253,6 +263,14 @@ struct TabSidebarHoverCardView: View {
                 .lineLimit(1)
                 .truncationMode(truncation)
                 .foregroundStyle(.primary.opacity(0.85))
+        }
+    }
+
+    private func loadModel() {
+        guard let transcript = info?.claudeSessions.first?.transcript else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let read = ClaudeCodeResponse.model(inTranscript: transcript)
+            DispatchQueue.main.async { model = read }
         }
     }
 

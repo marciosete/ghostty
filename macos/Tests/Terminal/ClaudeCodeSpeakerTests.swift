@@ -70,6 +70,21 @@ struct ClaudeCodeSpeakerTests {
         #expect(ClaudeCodeResponse.last(inTranscript: url) == "Hello there.")
     }
 
+    // MARK: Model
+
+    @Test func modelIsTheLastResponsesOwn() {
+        let lines = [
+            assistant(id: "a", [text("Before.")], model: "claude-sonnet-5-5"),
+            user("/model opus"),
+            assistant(id: "b", [toolUse]),
+            assistant(id: "c", [text("Subagent.")], sidechain: true, model: "claude-haiku-4-5-20251001"),
+            assistant(id: "d", [text("Interrupted")], model: "<synthetic>"),
+            user("hi"),
+        ]
+        #expect(ClaudeCodeResponse.model(inLines: lines) == "claude-opus-5-5")
+        #expect(ClaudeCodeResponse.model(inLines: [user("hi")]) == nil)
+    }
+
     // MARK: Spoken text
 
     @Test func codeBlocksAreNotRead() {
