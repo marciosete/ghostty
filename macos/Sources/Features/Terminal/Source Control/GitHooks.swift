@@ -4,7 +4,8 @@ import Foundation
 ///
 /// A hook announces its steps by printing markers such as `[3/8] Type-check…`, one as each
 /// step starts. The script is read for them, so the steps are known before the hook runs,
-/// and its output is read for them while it runs.
+/// and its output is read for them while it runs. When its output can't be read, such as
+/// when it goes through a pipe, the commands it runs say which step it is on instead.
 struct GitHookScript: Equatable {
     /// The hooks the source control panel follows, in the order they run.
     static let names = ["pre-commit", "pre-push"]
@@ -25,6 +26,10 @@ struct GitHookScript: Equatable {
 
     /// The step counts the markers give, such as 8 for `[3/8]`.
     let totals: Set<Int>
+
+    /// The commands each step runs, each as the words that name it, such as
+    /// `["pnpm", "lint"]` for `pnpm -r --if-present lint || exit 1`.
+    let commands: [[[String]]]
 
     /// The pre-commit and pre-push hooks of `repository` that git would run.
     static func scripts(of repository: Git.Repository) -> [GitHookScript] {
@@ -53,18 +58,112 @@ struct GitHookScript: Equatable {
         self.path = path
         self.isHusky = isHusky
 
+        let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+
+        // The script's own functions, such as `require_tool`, aren't commands it runs.
+        let functions = Set(lines.compactMap { line -> String? in
+            guard let match = line.firstMatch(of: #/^(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(\)/#) else { return nil }
+            return String(match.1)
+        })
+
         var steps: [String] = []
         var totals = Set<Int>()
-        for line in text.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+        var commands: [[[String]]] = []
+        for line in lines where !line.hasPrefix("#") {
             // Only what the script prints, not comments that mention a step.
-            guard trimmed.hasPrefix("echo") || trimmed.hasPrefix("printf"),
-                  let marker = Self.marker(in: String(trimmed)) else { continue }
-            steps.append(marker.title)
-            totals.insert(marker.total)
+            if line.hasPrefix("echo") || line.hasPrefix("printf"), let marker = Self.marker(in: line) {
+                steps.append(marker.title)
+                totals.insert(marker.total)
+                commands.append([])
+            } else if !commands.isEmpty {
+                commands[commands.count - 1] += Self.commands(in: line, functions: functions)
+            }
         }
         self.steps = steps
         self.totals = totals
+        self.commands = commands
+    }
+
+    /// Commands too common to tell a step by: the script's plumbing, and the shell's.
+    private static let plumbing: Set<String> = [
+        "echo", "printf", "exit", "return", "true", "false", "test", "[", "[[", "read", "local",
+        "export", "set", "cd", "command", "grep", "sed", "awk", "head", "tail", "cat", "wc",
+        "sort", "uniq", "tr", "basename", "dirname", "sleep",
+    ]
+
+    /// Words that start a command without naming it.
+    private static let prefixes: Set<String> = [
+        "if", "then", "else", "elif", "while", "until", "do", "done", "fi", "!", "time", "exec",
+        "xargs", "env", "nice",
+    ]
+
+    /// The commands a line of shell runs, each as the words that name it: the command and
+    /// its first arguments that aren't options, variables or quoted.
+    static func commands(in line: String, functions: Set<String> = []) -> [[String]] {
+        let separators = ["||", "&&", "$(", "|", ";", "(", ")", "{", "}", "`"]
+        // What is quoted is text, even when it reads like commands.
+        var segments = [line.replacing(#/"[^"]*"|'[^']*'/#, with: "\"\"")]
+        for separator in separators {
+            segments = segments.flatMap { $0.components(separatedBy: separator) }
+        }
+
+        return segments.compactMap { segment in
+            var words: [String] = []
+            for token in segment.split(separator: " ") {
+                let token = String(token)
+                if words.isEmpty {
+                    // Leading assignments and keywords.
+                    if token.firstMatch(of: #/^[A-Za-z_][A-Za-z0-9_]*=/#) != nil || prefixes.contains(token) { continue }
+                }
+                // Options are skipped, since the same command runs with different ones. What
+                // follows quotes, variables and redirects is their argument.
+                if token.hasPrefix("-") { continue }
+                guard !"\"'$<>&0123456789".contains(token.first ?? "\"") else {
+                    if words.isEmpty { return nil }
+                    break
+                }
+                words.append((token as NSString).lastPathComponent)
+                if words.count == 3 { break }
+            }
+            guard let command = words.first, !plumbing.contains(command), !functions.contains(command) else { return nil }
+            return words
+        }
+    }
+
+    /// The step a running command belongs to, or nil if it names none of them. It is
+    /// the step with the command that names it most closely, the last such step when
+    /// several do.
+    func step(running arguments: [String]) -> Int? {
+        let words = arguments.filter { !$0.hasPrefix("-") }.map(Self.word)
+        var best: (step: Int, length: Int)?
+        for (step, stepCommands) in commands.enumerated() {
+            for command in stepCommands where Self.words(words, contain: command.map(Self.word)) {
+                if best == nil || command.count >= best!.length {
+                    best = (step, command.count)
+                }
+            }
+        }
+        return best?.step
+    }
+
+    /// A word of a command, as a path or the script `node` runs is named: `pnpm` for
+    /// `/opt/homebrew/lib/node_modules/pnpm/bin/pnpm.cjs`.
+    private static func word(_ argument: String) -> String {
+        let name = (argument as NSString).lastPathComponent
+        for suffix in [".cjs", ".mjs", ".js"] where name.hasSuffix(suffix) {
+            return String(name.dropLast(suffix.count))
+        }
+        return name
+    }
+
+    /// `words` has every one of `command`, in order.
+    private static func words(_ words: [String], contain command: [String]) -> Bool {
+        var remaining = command[...]
+        for word in words where word == remaining.first {
+            remaining = remaining.dropFirst()
+            if remaining.isEmpty { return true }
+        }
+        return remaining.isEmpty
     }
 
     /// A step's marker in a line, such as `[3/8] Type-check…`, with its title cleaned of

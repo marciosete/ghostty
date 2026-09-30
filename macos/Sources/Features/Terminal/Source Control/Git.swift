@@ -106,6 +106,15 @@ enum Git {
             .map { realPath($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
     }
 
+    /// What the command running `hook` changes once the hook passes: HEAD for a commit, and
+    /// the remote-tracking branches for a push. Nil when there is none yet, such as HEAD
+    /// before the first commit.
+    static func state(changedBy hook: String, in repository: Repository) -> String? {
+        hook == "pre-push"
+            ? run(["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes"], in: repository.root)
+            : run(["rev-parse", "HEAD"], in: repository.root)
+    }
+
     /// Resolves symlinks the same way file system events report paths. Unlike
     /// `resolvingSymlinksInPath`, this keeps the `/private` prefix of `/tmp` and `/var`.
     static func realPath(_ path: String) -> URL {

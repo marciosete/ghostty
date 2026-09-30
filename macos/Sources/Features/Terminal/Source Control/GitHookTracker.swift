@@ -11,8 +11,7 @@ struct GitHookRun: Equatable {
         /// It stopped at `current` without passing.
         case failed
 
-        /// It ended, but neither its output nor its steps say whether it passed: its
-        /// output went to a terminal, or it announces no steps.
+        /// It ended, but nothing says whether it passed.
         case ended
     }
 
@@ -43,7 +42,8 @@ struct GitHookRun: Equatable {
 
     var outcome: Outcome = .running
 
-    /// Its steps are followed through its output, which is written to a file.
+    /// Its steps are followed: through its output, when it is written to a file, or else
+    /// through the commands it runs.
     let followsSteps: Bool
 
     var duration: TimeInterval? { endedAt.map { $0.timeIntervalSince(startedAt) } }
@@ -53,6 +53,10 @@ struct GitHookRun: Equatable {
 /// them: the processes running as the user are scanned for the hook's script, and the
 /// file its output goes to, when it goes to one, such as Claude Code's, is read for the
 /// markers of its steps.
+///
+/// Output that goes through a pipe, such as `git commit 2>&1 | tail`, can't be read. The
+/// commands the script runs say which step it is on then, and whether git went on to
+/// commit or push says whether it passed.
 ///
 /// There is one tracker per repository, kept for the life of the app so the last run of
 /// each hook stays known. It only scans while a panel watches it.
@@ -91,6 +95,16 @@ final class GitHookTracker: ObservableObject {
         let file: URL?
         var offset: UInt64 = 0
         var parser: GitHookOutputParser
+
+        /// The git command running the hook.
+        let git: pid_t?
+
+        /// Without a file to read: what the git command changes once the hook passes, as
+        /// it was when the run was first seen, and the steps its commands reached.
+        let stateBefore: String?
+        var reachedByCommands: [Int] = []
+
+        var reached: [Int] { file == nil ? reachedByCommands : parser.reached }
 
         /// When the run was first seen to have ended. Its output is read once more
         /// before it counts, since what runs the script may still be writing about it.
@@ -211,11 +225,14 @@ final class GitHookTracker: ObservableObject {
     /// Reads on in the output of the run of `script`, if one runs or has just ended.
     private func follow(_ script: GitHookScript, running: (pid: pid_t, startedAt: Date)?) -> Scan? {
         if let running, outputs[script.name]?.pid != running.pid {
+            let file = RunningProcess.outputFile(running.pid)
             outputs[script.name] = Output(
                 pid: running.pid,
                 startedAt: running.startedAt,
-                file: RunningProcess.outputFile(running.pid),
-                parser: GitHookOutputParser(script: script))
+                file: file,
+                parser: GitHookOutputParser(script: script),
+                git: Self.git(running: running.pid),
+                stateBefore: file == nil ? Git.state(changedBy: script.name, in: repository) : nil)
         }
         guard var output = outputs[script.name], !output.isFinished else { return nil }
         defer { outputs[script.name] = output }
@@ -226,14 +243,20 @@ final class GitHookTracker: ObservableObject {
                 output.offset += UInt64(data.count)
                 output.parser.feed(data)
             }
+        } else if output.file == nil, running != nil, let step = Self.step(of: script, running: output.pid) {
+            // Steps too quick to be seen between scans were passed through all the same.
+            let next = (output.reachedByCommands.last ?? -1) + 1
+            if step >= next { output.reachedByCommands += Array(next...step) }
         }
 
+        let followsSteps = !script.steps.isEmpty
+            && (output.file != nil || script.commands.contains { !$0.isEmpty })
         var scan = Scan(
             script: script,
             pid: output.pid,
             startedAt: output.startedAt,
-            reached: output.parser.reached,
-            followsSteps: output.file != nil && !script.steps.isEmpty)
+            reached: output.reached,
+            followsSteps: followsSteps)
         guard running == nil else { return scan }
 
         guard let endedAt = output.endedAt else {
@@ -242,28 +265,72 @@ final class GitHookTracker: ObservableObject {
         }
 
         output.parser.finish()
+        guard let outcome = outcome(of: output, script: script) else {
+            // Git hasn't gone on to commit or push yet, nor given up.
+            return scan
+        }
         output.isFinished = true
-        scan = Scan(
-            script: script,
-            pid: output.pid,
-            startedAt: output.startedAt,
-            reached: output.parser.reached,
-            followsSteps: scan.followsSteps,
-            endedAt: endedAt,
-            outcome: Self.outcome(of: output, script: script))
+        scan.endedAt = endedAt
+        scan.outcome = outcome
         return scan
     }
 
-    private static func outcome(of output: Output, script: GitHookScript) -> GitHookRun.Outcome {
+    /// How long git is waited for to commit or push after a hook it can't read ends.
+    private static let gitWait: TimeInterval = 120
+
+    /// How the run ended, or nil while it can't tell yet.
+    private func outcome(of output: Output, script: GitHookScript) -> GitHookRun.Outcome? {
         let parser = output.parser
         if parser.failed { return .failed }
         if parser.passed { return .passed }
-        guard output.file != nil else { return .ended }
+        guard output.file != nil else {
+            // Git commits or pushes once the hook passes, and gives up when it fails.
+            if Git.state(changedBy: script.name, in: repository) != output.stateBefore { return .passed }
+            if let git = output.git, RunningProcess.isRunning(git),
+               let endedAt = output.endedAt, Date().timeIntervalSince(endedAt) < Self.gitWait {
+                return nil
+            }
+            return output.git == nil ? .ended : .failed
+        }
         // Husky says when the script fails, and it didn't.
         if script.isHusky { return .passed }
         // Without it, a script that stopped before its last step failed.
         guard let last = parser.reached.last else { return .ended }
         return last == script.steps.count - 1 ? .ended : .failed
+    }
+
+    /// The git command that runs a hook's script: its parent, or its grandparent when
+    /// something like Husky's `.husky/_/h` runs the script.
+    private static func git(running pid: pid_t) -> pid_t? {
+        var ancestor = pid
+        for _ in 0..<3 {
+            guard let parent = RunningProcess.parent(ancestor), parent > 1 else { return nil }
+            if RunningProcess.name(parent) == "git" { return parent }
+            ancestor = parent
+        }
+        return nil
+    }
+
+    /// The step of `script` its process `pid` is on, from the commands it runs. The
+    /// script's subshells, such as for `$(git diff …)`, run with its arguments, and the
+    /// commands they run count too.
+    private static func step(of script: GitHookScript, running pid: pid_t) -> Int? {
+        let arguments = RunningProcess.arguments(pid)
+        var shells = [pid]
+        var steps: [Int] = []
+        var looked = 0
+        while let shell = shells.popLast(), looked < 64 {
+            for child in RunningProcess.children(shell) {
+                looked += 1
+                guard let childArguments = RunningProcess.arguments(child) else { continue }
+                if childArguments == arguments {
+                    shells.append(child)
+                } else if let step = script.step(running: childArguments) {
+                    steps.append(step)
+                }
+            }
+        }
+        return steps.max()
     }
 
     // MARK: Runs

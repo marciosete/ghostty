@@ -14,6 +14,33 @@ enum RunningProcess {
         return Array(pids.prefix(Int(found)).filter { $0 > 0 })
     }
 
+    /// The processes the process started that are still running.
+    static func children(_ pid: pid_t) -> [pid_t] {
+        var pids = [pid_t](repeating: 0, count: 256)
+        let bytes = pids.withUnsafeMutableBytes {
+            proc_listpids(UInt32(PROC_PPID_ONLY), UInt32(pid), $0.baseAddress, Int32($0.count))
+        }
+        guard bytes > 0 else { return [] }
+        return pids.prefix(Int(bytes) / MemoryLayout<pid_t>.size).filter { $0 > 0 }
+    }
+
+    /// The process that started the process.
+    static func parent(_ pid: pid_t) -> pid_t? {
+        bsdInfo(pid).map { pid_t($0.pbi_ppid) }
+    }
+
+    /// The process is still running.
+    static func isRunning(_ pid: pid_t) -> Bool {
+        bsdInfo(pid) != nil
+    }
+
+    private static func bsdInfo(_ pid: pid_t) -> proc_bsdinfo? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return info
+    }
+
     /// The name of the process's executable, such as `sh`.
     static func name(_ pid: pid_t) -> String? {
         var buffer = [CChar](repeating: 0, count: Int(MAXCOMLEN) * 2 + 1)
@@ -56,9 +83,7 @@ enum RunningProcess {
 
     /// When the process started.
     static func startTime(_ pid: pid_t) -> Date? {
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        guard let info = bsdInfo(pid) else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000)
     }
 

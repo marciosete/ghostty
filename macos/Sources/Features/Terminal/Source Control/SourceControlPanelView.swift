@@ -70,11 +70,11 @@ struct SourceControlPanelView: View {
         case .ready(_, let status):
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    section(.staged, title: "Staged Changes", changes: status.staged)
+                    section(.changes, title: "Changes", changes: status.unstaged)
                     if let hookTracker = model.hookTracker {
                         SourceControlHooksView(tracker: hookTracker, toggled: $model.collapsed)
                     }
-                    section(.staged, title: "Staged Changes", changes: status.staged)
-                    section(.changes, title: "Changes", changes: status.unstaged)
                 }
                 .padding(.vertical, 4)
             }

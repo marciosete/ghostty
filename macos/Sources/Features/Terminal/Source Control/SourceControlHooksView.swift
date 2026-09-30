@@ -160,7 +160,7 @@ private struct SourceControlHookView: View {
         if let run, !run.followsSteps {
             lines.append(script.steps.isEmpty
                 ? "The hook announces no steps, such as \"[1/3] Lint…\""
-                : "Its steps can't be followed: its output goes to a terminal, not a file as when Claude Code runs git")
+                : "Its steps can't be followed: it runs none of the commands its script names")
         }
         return lines.joined(separator: "\n")
     }
