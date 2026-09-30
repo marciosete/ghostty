@@ -33,7 +33,6 @@ class TerminalWindow: NSWindow {
         label.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         label.textColor = .secondaryLabelColor
         label.lineBreakMode = .byClipping
-        label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
 
@@ -296,15 +295,10 @@ class TerminalWindow: NSWindow {
             addTitlebarAccessoryViewController(resetZoomAccessory)
             resetZoomAccessory.view.translatesAutoresizingMaskIntoConstraints = false
 
+            // AppKit sizes a titlebar accessory by its view's frame, so the container is
+            // frame-based and sized to its text (see `updateReplySpeedAccessory`).
             let replySpeedView = NSView()
-            replySpeedView.translatesAutoresizingMaskIntoConstraints = false
             replySpeedView.addSubview(replySpeedLabel)
-            NSLayoutConstraint.activate([
-                replySpeedLabel.leadingAnchor.constraint(equalTo: replySpeedView.leadingAnchor, constant: 4),
-                replySpeedLabel.trailingAnchor.constraint(equalTo: replySpeedView.trailingAnchor, constant: -8),
-                replySpeedLabel.centerYAnchor.constraint(equalTo: replySpeedView.centerYAnchor),
-                replySpeedView.heightAnchor.constraint(equalTo: replySpeedLabel.heightAnchor, constant: 8),
-            ])
             replySpeedAccessory.layoutAttribute = .right
             replySpeedAccessory.view = replySpeedView
             replySpeedAccessory.isHidden = true
@@ -647,10 +641,15 @@ class TerminalWindow: NSWindow {
     }
 
     private func updateReplySpeedAccessory() {
-        guard replySpeedAccessory.view != nil else { return }
+        guard replySpeedAccessory.isViewLoaded else { return }
+        let container = replySpeedAccessory.view
         if let readout = claudeStreamReadout {
             replySpeedLabel.stringValue = readout
             replySpeedLabel.toolTip = claudeStreamState?.help
+            replySpeedLabel.sizeToFit()
+            let size = replySpeedLabel.frame.size
+            container.frame = NSRect(x: 0, y: 0, width: size.width + 12, height: size.height + 8)
+            replySpeedLabel.frame = NSRect(x: 4, y: 4, width: size.width, height: size.height)
             replySpeedAccessory.isHidden = false
         } else {
             replySpeedLabel.stringValue = ""
