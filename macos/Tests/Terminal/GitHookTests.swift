@@ -251,6 +251,50 @@ struct GitHookTests {
         #expect(run.current == 1)
     }
 
+    @Test @MainActor func aRunThatEndedGoesOnceHeadMovesOn() async throws {
+        let root = try Self.huskyRepository(hook: "pre-commit", script: """
+            echo "[1/1] One…"
+            ./scripts/one.sh
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Self.write("#!/bin/sh\nsleep 1\n", to: root.appendingPathComponent("scripts/one.sh"))
+        let repository = try #require(Git.repository(containing: root))
+        let tracker = GitHookTracker.tracker(for: repository)
+        let watch = tracker.watch()
+        defer { watch.cancel() }
+        try await Self.wait { !tracker.scripts.isEmpty }
+
+        let commit = try Self.commitThroughPipe(in: root)
+        try await Self.wait { tracker.runs["pre-commit"]?.outcome == .passed }
+        commit.waitUntilExit()
+
+        // The commit it made leaves it standing.
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+        #expect(tracker.runs["pre-commit"]?.outcome == .passed)
+
+        // Another commit moves HEAD on.
+        try Self.git(["commit", "-q", "--allow-empty", "--no-verify", "-m", "next"], in: root)
+        try await Self.wait { tracker.runs["pre-commit"] == nil }
+    }
+
+    @Test @MainActor func aRunThatEndedGoesWhenItsStepsChange() async throws {
+        let root = try Self.huskyRepository(prePush: """
+            echo "[1/1] One…"
+            sleep 1
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let run = try await Self.track(root)
+        #expect(run.outcome == .passed)
+
+        let repository = try #require(Git.repository(containing: root))
+        let tracker = GitHookTracker.tracker(for: repository)
+        let watch = tracker.watch()
+        defer { watch.cancel() }
+        try Self.write("#!/bin/bash\necho \"[1/2] One…\"\necho \"[2/2] Two…\"\n", to: root.appendingPathComponent(".husky/pre-push"))
+        try await Self.wait { tracker.runs["pre-push"] == nil }
+        #expect(tracker.scripts.first?.steps == ["One", "Two"])
+    }
+
     @Test @MainActor func timesTheStepsOfAHookThatPasses() async throws {
         let root = try Self.huskyRepository(prePush: """
             echo "[1/3] One…"
@@ -326,6 +370,17 @@ struct GitHookTests {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         Issue.record("The run never ended: \(String(describing: tracker.runs[hook]))")
+        throw CancellationError()
+    }
+
+    /// Waits up to ten seconds for `condition`.
+    @MainActor
+    private static func wait(_ condition: () -> Bool) async throws {
+        for _ in 0..<100 {
+            if condition() { return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        Issue.record("Timed out")
         throw CancellationError()
     }
 

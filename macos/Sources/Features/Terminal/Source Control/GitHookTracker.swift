@@ -60,6 +60,11 @@ struct GitHookRun: Equatable {
 ///
 /// There is one tracker per repository, kept for the life of the app so the last run of
 /// each hook stays known. It only scans while a panel watches it.
+///
+/// A run that ended is shown while it still speaks for the checkout: once git is done
+/// with it, having made the commit or the push, it goes as soon as HEAD moves, such as
+/// by a rebase, another commit, a reset or a switch of branch. It goes too when its
+/// script's steps change.
 final class GitHookTracker: ObservableObject {
     let repository: Git.Repository
 
@@ -75,6 +80,10 @@ final class GitHookTracker: ObservableObject {
     /// How many scans pass between looking for the hooks' scripts again, which notices
     /// them being added, removed or changed.
     private static let scriptsEvery = 10
+
+    /// How many scans pass between looking for HEAD to have moved on from a run that
+    /// ended.
+    private static let headEvery = 4
 
     /// The shells a hook's script runs in.
     private static let shells: Set<String> = ["sh", "bash", "zsh", "dash"]
@@ -111,6 +120,11 @@ final class GitHookTracker: ObservableObject {
         var endedAt: Date?
 
         var isFinished = false
+
+        /// Where the checkout was once git was done with the run, which it speaks for
+        /// until HEAD moves. Only set when `headKnown`, since it can be nil.
+        var headAfter: String?
+        var headKnown = false
     }
 
     /// What a scan found about the run of one hook.
@@ -190,10 +204,35 @@ final class GitHookTracker: ObservableObject {
             }
         }
 
+        let stale = scans % Self.headEvery == 0 ? staleRuns() : []
+
         let now = Date()
         DispatchQueue.main.async { [weak self] in
-            self?.apply(scripts: scripts, scans: found, at: now)
+            self?.apply(scripts: scripts, scans: found, stale: stale, at: now)
         }
+    }
+
+    /// The runs that ended and that HEAD has moved on from since git was done with them,
+    /// by hook, with the process that ran each. They're forgotten.
+    private func staleRuns() -> [(hook: String, pid: pid_t)] {
+        let ended = outputs.filter { $0.value.isFinished }
+        guard !ended.isEmpty else { return [] }
+
+        let head = Git.head(of: repository)
+        var stale: [(hook: String, pid: pid_t)] = []
+        for (hook, var output) in ended {
+            // The commit or the push isn't done until git is.
+            if let git = output.git, RunningProcess.isRunning(git) { continue }
+            if !output.headKnown {
+                output.headAfter = head
+                output.headKnown = true
+                outputs[hook] = output
+            } else if head != output.headAfter {
+                stale.append((hook, output.pid))
+                outputs[hook] = nil
+            }
+        }
+        return stale
     }
 
     /// The process running each hook's script, by the hook's name. A script's subshells
@@ -335,7 +374,7 @@ final class GitHookTracker: ObservableObject {
 
     // MARK: Runs
 
-    private func apply(scripts: [GitHookScript], scans: [Scan], at now: Date) {
+    private func apply(scripts: [GitHookScript], scans: [Scan], stale: [(hook: String, pid: pid_t)], at now: Date) {
         if scripts != self.scripts { self.scripts = scripts }
 
         var runs = self.runs
@@ -364,8 +403,15 @@ final class GitHookTracker: ObservableObject {
             }
             runs[scan.script.name] = run
         }
-        // Hooks that are gone take their runs with them.
-        runs = runs.filter { name, _ in scripts.contains { $0.name == name } }
+        for (hook, pid) in stale where runs[hook]?.pid == pid {
+            runs[hook] = nil
+        }
+        // Hooks that are gone take their runs with them, and a run that ended goes when
+        // its script's steps change.
+        runs = runs.filter { name, run in
+            guard let script = scripts.first(where: { $0.name == name }) else { return false }
+            return run.outcome == .running || run.steps.map(\.title) == script.steps
+        }
         if runs != self.runs { self.runs = runs }
     }
 

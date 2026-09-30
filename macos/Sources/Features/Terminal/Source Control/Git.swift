@@ -115,6 +115,12 @@ enum Git {
             : run(["rev-parse", "HEAD"], in: repository.root)
     }
 
+    /// Where the working tree is: the commit checked out, and the branch, or `HEAD` when
+    /// it is detached. Nil before the first commit.
+    static func head(of repository: Repository) -> String? {
+        run(["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"], in: repository.root)
+    }
+
     /// Resolves symlinks the same way file system events report paths. Unlike
     /// `resolvingSymlinksInPath`, this keeps the `/private` prefix of `/tmp` and `/var`.
     static func realPath(_ path: String) -> URL {
