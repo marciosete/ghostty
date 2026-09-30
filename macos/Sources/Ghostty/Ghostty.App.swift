@@ -1620,11 +1620,15 @@ extension Ghostty {
 
             center.getNotificationSettings { settings in
                 guard settings.authorizationStatus == .authorized else { return }
-                surfaceView.showUserNotification(
-                    title: title,
-                    body: body,
-                    requireFocus: requireFocus
-                )
+                // The settings arrive on a background thread, and the notification reads
+                // the surface's window for its session's name.
+                DispatchQueue.main.async {
+                    surfaceView.showUserNotification(
+                        title: title,
+                        body: body,
+                        requireFocus: requireFocus
+                    )
+                }
             }
         }
 

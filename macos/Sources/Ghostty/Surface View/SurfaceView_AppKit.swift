@@ -1775,7 +1775,9 @@ extension Ghostty {
         func showUserNotification(title: String, body: String, requireFocus: Bool = true) {
             let content = UNMutableNotificationContent()
             content.title = title
-            content.subtitle = self.title
+            // A session the user renamed is known by its name, not the terminal's title.
+            let controller = window?.windowController as? BaseTerminalController
+            content.subtitle = controller?.sessionName ?? self.title
             content.body = body
             content.sound = UNNotificationSound.default
             content.categoryIdentifier = Ghostty.userNotificationCategory

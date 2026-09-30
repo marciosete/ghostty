@@ -129,6 +129,12 @@ class BaseTerminalController: NSWindowController,
         Self.withoutClaudeCodeStatus(titleOverride ?? sessionTitle)
     }
 
+    /// The name the user renamed the session to, without the status Claude Code puts in
+    /// front of it, or nil when it keeps the terminal's title.
+    var sessionName: String? {
+        titleOverride.map(Self.withoutClaudeCodeStatus)
+    }
+
     private static let claudeCodeStatuses = ["◐", "◑", "◒", "◓", "✳"]
 
     /// The status Claude Code put in front of `title`, if it did.
