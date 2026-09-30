@@ -9,15 +9,20 @@ enum ClaudeCodeResponse {
     /// transcript can be many megabytes.
     private static let tailSize: UInt64 = 4 << 20
 
+    /// How much of the end of a transcript is read for its model. The sidebar reads it
+    /// again whenever a working session writes, so it reads less, and a response whose
+    /// last message is further back leaves the model unknown.
+    private static let modelTailSize: UInt64 = 1 << 20
+
     /// The text of the last response in the transcript at `url`.
     static func last(inTranscript url: URL) -> String? {
-        tailLines(ofTranscript: url).flatMap(last(inLines:))
+        tailLines(ofTranscript: url, size: tailSize).flatMap(last(inLines:))
     }
 
     /// The model that wrote the last response in the transcript at `url`, which is the
     /// model the session is using.
     static func model(inTranscript url: URL) -> String? {
-        tailLines(ofTranscript: url).flatMap(model(inLines:))
+        tailLines(ofTranscript: url, size: modelTailSize).flatMap(model(inLines:))
     }
 
     /// The model of the last message in transcript lines that a model wrote for the
@@ -35,8 +40,8 @@ enum ClaudeCodeResponse {
         return nil
     }
 
-    /// The whole lines at the end of the transcript at `url`.
-    private static func tailLines(ofTranscript url: URL) -> [Data]? {
+    /// The whole lines in the last `size` bytes of the transcript at `url`.
+    private static func tailLines(ofTranscript url: URL, size tailSize: UInt64) -> [Data]? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
 

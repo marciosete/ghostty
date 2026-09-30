@@ -160,9 +160,6 @@ struct TabSidebarHoverCardView: View {
     @State private var usage: [ClaudeCodeSessionCost.ModelUsage]?
     @State private var usageRead = false
 
-    /// The model of the session's last response, once the transcript is read.
-    @State private var model: String?
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(tab.title)
@@ -175,7 +172,7 @@ struct TabSidebarHoverCardView: View {
                 }
             }
 
-            if let model {
+            if let model = info?.model {
                 row("cpu", Self.shortName(model))
             }
 
@@ -199,10 +196,7 @@ struct TabSidebarHoverCardView: View {
             }
         }
         .font(.system(size: 12))
-        .onAppear {
-            loadModel()
-            loadUsage()
-        }
+        .onAppear(perform: loadUsage)
     }
 
     /// A row per model, and their total when there are several.
@@ -263,14 +257,6 @@ struct TabSidebarHoverCardView: View {
                 .lineLimit(1)
                 .truncationMode(truncation)
                 .foregroundStyle(.primary.opacity(0.85))
-        }
-    }
-
-    private func loadModel() {
-        guard let transcript = info?.claudeSessions.first?.transcript else { return }
-        DispatchQueue.global(qos: .utility).async {
-            let read = ClaudeCodeResponse.model(inTranscript: transcript)
-            DispatchQueue.main.async { model = read }
         }
     }
 

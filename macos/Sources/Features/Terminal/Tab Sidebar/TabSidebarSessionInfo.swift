@@ -3,7 +3,7 @@ import Combine
 
 /// Where a session works, shown on its extended row, in its hover card and copied from its
 /// menu: the directory of its Claude Code session, or else of its focused terminal, and
-/// the branch checked out there.
+/// the branch checked out there. With the model its Claude Code is using.
 struct TabSidebarSessionInfo: Equatable {
     /// The directory, when a terminal has reported one.
     var directory: String?
@@ -25,6 +25,10 @@ struct TabSidebarSessionInfo: Equatable {
     /// session found already finished did its last work.
     var lastActive: Date?
 
+    /// The model of the last response of the tab's Claude Code session, which is the model
+    /// it is using.
+    var model: String?
+
     /// `directory` with the home directory as `~`.
     var abbreviatedDirectory: String? {
         directory.map { ($0 as NSString).abbreviatingWithTildeInPath }
@@ -32,7 +36,8 @@ struct TabSidebarSessionInfo: Equatable {
 }
 
 /// Reads the info of the sessions of a sidebar off the main thread. Git is asked about a
-/// directory at most every few seconds, however often the sidebar refreshes.
+/// directory at most every few seconds, however often the sidebar refreshes, and a
+/// transcript is read for its model only once it has changed.
 final class TabSidebarSessionInfoReader {
     /// How long what git said about a directory is trusted.
     private static let gitMaxAge: TimeInterval = 10
@@ -41,6 +46,9 @@ final class TabSidebarSessionInfoReader {
 
     /// Only touched on `queue`.
     private var checkouts: [String: (value: Git.Checkout?, readAt: Date)] = [:]
+
+    /// Only touched on `queue`.
+    private var models: [URL: (value: String?, modified: Date)] = [:]
 
     /// A tab to read: its foreground processes and its focused terminal's directory.
     struct Request {
@@ -67,6 +75,7 @@ final class TabSidebarSessionInfoReader {
         info.lastActive = info.claudeSessions
             .compactMap { $0.transcript.flatMap(Self.modified) }
             .max()
+        info.model = info.claudeSessions.first?.transcript.flatMap(model(of:))
 
         info.checkout = info.directory.flatMap(checkout(of:))
         return info
@@ -74,6 +83,17 @@ final class TabSidebarSessionInfoReader {
 
     private static func modified(_ url: URL) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    private func model(of transcript: URL) -> String? {
+        guard let modified = Self.modified(transcript) else { return nil }
+        if let known = models[transcript], known.modified == modified {
+            return known.value
+        }
+        // A response too far back to read leaves the model it was known to be.
+        let value = ClaudeCodeResponse.model(inTranscript: transcript) ?? models[transcript]?.value
+        models[transcript] = (value, modified)
+        return value
     }
 
     private func checkout(of directory: String) -> Git.Checkout? {

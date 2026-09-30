@@ -436,6 +436,7 @@ private struct TabSidebarTabRow: View {
                 HStack(spacing: 6) {
                     locationLine
                     Spacer(minLength: 0)
+                    modelLabel
                     speakerButton
                 }
             }
@@ -611,6 +612,24 @@ private struct TabSidebarTabRow: View {
         } else {
             // Keeps the row's layout while the info is read.
             Text(" ").font(.system(size: 11))
+        }
+    }
+
+    /// The model the session's Claude Code is using. It keeps its width, and the location
+    /// before it is cut short instead.
+    @ViewBuilder
+    private var modelLabel: some View {
+        if let model = info?.model {
+            HStack(spacing: 3) {
+                Image(systemName: "cpu")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(TabSidebarHoverCardView.shortName(model))
+                    .lineLimit(1)
+            }
+            .font(.system(size: 11))
+            .opacity(0.6)
+            .fixedSize()
+            .help(model)
         }
     }
 
