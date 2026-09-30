@@ -296,6 +296,30 @@ struct ClaudeCodeLightTests {
         #expect(try Self.output(["rev-list", "--count", "main"], in: main) == "3")
     }
 
+    /// Another session rebased the worktree's commits and landed them, and this branch
+    /// still has the commits they were rebased from.
+    @Test func commitsLandedAsCopiesHaveLanded() throws {
+        let (made, main, worktreeURL) = try Self.repositoryWithWorktree()
+        defer { try? FileManager.default.removeItem(at: made) }
+        let worktree = try #require(Git.linkedWorktree(containing: worktreeURL))
+        let repository = try #require(Git.repository(containing: worktreeURL))
+
+        try Self.commit("a.txt", "a\n", in: worktreeURL)
+        try Self.commit("b.txt", "b\n", in: worktreeURL)
+        try Self.commit("other.txt", "other\n", in: main)
+        try Self.git(["cherry-pick", "main..worktree-a"], in: main)
+        #expect(try Self.output(["rev-list", "--count", "main..worktree-a"], in: main) == "2")
+
+        #expect(Git.progress(of: worktree)?.unlandedCommits == 0)
+        let status = try #require(Git.status(of: repository))
+        #expect(status.ahead == 0)
+        #expect(status.behind == 3)
+
+        // A commit of its own still counts.
+        try Self.commit("c.txt", "c\n", in: worktreeURL)
+        #expect(Git.progress(of: worktree)?.unlandedCommits == 1)
+    }
+
     @Test func conflictsLeaveBothBranchesAlone() throws {
         let (made, main, worktreeURL) = try Self.repositoryWithWorktree()
         defer { try? FileManager.default.removeItem(at: made) }

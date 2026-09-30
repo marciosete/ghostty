@@ -345,17 +345,28 @@ enum Git {
         return (changedPaths(porcelain: status).count, unlanded)
     }
 
-    /// The commits on HEAD that aren't on `base`, nor on its upstream. A worktree is
-    /// usually branched from the upstream, which can be ahead of `base` when `base` hasn't
-    /// been pulled, and those commits have landed already.
+    /// The commits on HEAD whose changes aren't on `base`, nor on its upstream. A worktree
+    /// is usually branched from the upstream, which can be ahead of `base` when `base`
+    /// hasn't been pulled, and those commits have landed already. Commits are compared by
+    /// their changes, as `git cherry` does: a commit that another session rebased and
+    /// landed has landed, though this branch still has the commit it was rebased from.
     private static func unlandedCommits(on base: String, in directory: URL) -> Int? {
         let upstream = run(["for-each-ref", "--format=%(upstream)", "refs/heads/\(base)"], in: directory)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        var arguments = ["rev-list", "--count", "HEAD", "^refs/heads/\(base)"]
+        var bases = ["refs/heads/\(base)"]
         if let upstream, !upstream.isEmpty, run(["rev-parse", "--verify", "--quiet", upstream], in: directory) != nil {
-            arguments.append("^\(upstream)")
+            bases.append(upstream)
         }
-        return run(arguments, in: directory).flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+
+        var unlanded: Set<Substring>?
+        for base in bases {
+            // `+ <commit>` for a commit whose changes `base` doesn't have, `- <commit>` for
+            // one it does.
+            guard let cherry = run(["cherry", base, "HEAD"], in: directory) else { return nil }
+            let missing = Set(cherry.split(separator: "\n").filter { $0.hasPrefix("+ ") }.map { $0.dropFirst(2) })
+            unlanded = unlanded.map { $0.intersection(missing) } ?? missing
+        }
+        return unlanded?.count
     }
 
     enum LandError: Error {
