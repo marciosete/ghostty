@@ -347,6 +347,11 @@ final class ClaudeCodeLights {
     private static let retryDelay: TimeInterval = 0.2
     private static let retries = 5
 
+    /// Git moves a branch by writing `main.lock` and renaming it over `main`, and the
+    /// first of those changes is seen before the second is made. A session is read this
+    /// long after a change to what it watches, once git is done.
+    private static let settleDelay: TimeInterval = 0.3
+
     private let queue = DispatchQueue(label: "com.mitchellh.ghostty.claude-code-lights", qos: .utility)
     private let reader = ClaudeCodeLightReader()
 
@@ -364,6 +369,10 @@ final class ClaudeCodeLights {
     /// While a session isn't working: watches on its transcript and on the git directories
     /// of the files it edited, by process.
     private var idleWatches: [Int: [DispatchSourceFileSystemObject]] = [:]
+    private var idleWatchURLs: [Int: [URL]] = [:]
+
+    /// Sessions to read once a change to what they watch settles.
+    private var settlingReads: Set<Int> = []
 
     /// A watch on the registry directory, while any tab is `auto`.
     private var directoryWatch: DispatchSourceFileSystemObject?
@@ -520,13 +529,30 @@ final class ClaudeCodeLights {
 
     /// Watches `urls` for process `pid` in place of what was watched before. Any change to
     /// them reads the session again.
+    ///
+    /// Watches that stay the same are kept: a change made while they were remade, such as
+    /// the second half of git moving a branch, would be missed.
     private func setIdleWatches(_ urls: [URL], for pid: Int) {
+        guard urls != idleWatchURLs[pid] else { return }
         idleWatches[pid]?.forEach { $0.cancel() }
         idleWatches[pid] = nil
+        idleWatchURLs[pid] = nil
         guard !urls.isEmpty else { return }
 
+        idleWatchURLs[pid] = urls
         idleWatches[pid] = urls.compactMap { url in
-            Self.watch(url, events: [.write, .extend]) { [weak self] _ in self?.read(pid) }
+            Self.watch(url, events: [.write, .extend]) { [weak self] _ in self?.readOnceSettled(pid) }
+        }
+    }
+
+    /// Reads process `pid`'s session once what changed has settled. Changes before then
+    /// are read together.
+    private func readOnceSettled(_ pid: Int) {
+        guard settlingReads.insert(pid).inserted else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleDelay) { [weak self] in
+            guard let self else { return }
+            self.settlingReads.remove(pid)
+            self.read(pid)
         }
     }
 
