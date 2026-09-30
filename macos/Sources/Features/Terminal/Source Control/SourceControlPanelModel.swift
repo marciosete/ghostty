@@ -57,6 +57,9 @@ final class SourceControlPanelModel: ObservableObject {
     /// Tree folders and sections the user collapsed, keyed by `SourceControlTree` ids.
     @Published var collapsed: Set<String> = []
 
+    /// Follows the pre-commit and pre-push hooks of the repository shown.
+    @Published private(set) var hookTracker: GitHookTracker?
+
     /// How often the focused terminal is checked for Claude Code starting or exiting,
     /// which doesn't change the terminal's working directory.
     private static let sessionCheckInterval: TimeInterval = 2
@@ -73,6 +76,7 @@ final class SourceControlPanelModel: ObservableObject {
     private var isVisible = false
     private var monitor: GitRepositoryMonitor?
     private var monitorCancellable: AnyCancellable?
+    private var hookWatch: AnyCancellable?
     private var sessionCheckTimer: Timer?
 
     /// Incremented for every lookup so a slow, outdated lookup can't win over a newer one.
@@ -173,6 +177,9 @@ final class SourceControlPanelModel: ObservableObject {
 
         let monitor = GitRepositoryMonitor.monitor(for: repository)
         self.monitor = monitor
+        let hookTracker = GitHookTracker.tracker(for: repository)
+        self.hookTracker = hookTracker
+        hookWatch = hookTracker.watch()
         state = monitor.status.map { .ready(repository, $0) } ?? .loading(repository)
         monitorCancellable = monitor.$status
             .compactMap { $0 }
@@ -188,5 +195,7 @@ final class SourceControlPanelModel: ObservableObject {
     private func stopMonitoring() {
         monitorCancellable = nil
         monitor = nil
+        hookWatch = nil
+        hookTracker = nil
     }
 }

@@ -99,9 +99,16 @@ enum Git {
             commonDir: realPath(String(lines[2])))
     }
 
+    /// The directory git runs a repository's hooks from: `core.hooksPath`, such as Husky's
+    /// `.husky/_`, or else the git directory's `hooks`.
+    static func hooksDirectory(of repository: Repository) -> URL? {
+        run(["rev-parse", "--path-format=absolute", "--git-path", "hooks"], in: repository.root)
+            .map { realPath($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
     /// Resolves symlinks the same way file system events report paths. Unlike
     /// `resolvingSymlinksInPath`, this keeps the `/private` prefix of `/tmp` and `/var`.
-    private static func realPath(_ path: String) -> URL {
+    static func realPath(_ path: String) -> URL {
         guard let resolved = realpath(path, nil) else { return URL(fileURLWithPath: path) }
         defer { free(resolved) }
         return URL(fileURLWithPath: String(cString: resolved))

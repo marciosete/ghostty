@@ -70,6 +70,9 @@ struct SourceControlPanelView: View {
         case .ready(_, let status):
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if let hookTracker = model.hookTracker {
+                        SourceControlHooksView(tracker: hookTracker, toggled: $model.collapsed)
+                    }
                     section(.staged, title: "Staged Changes", changes: status.staged)
                     section(.changes, title: "Changes", changes: status.unstaged)
                 }
@@ -194,13 +197,13 @@ private struct SourceControlBranchView: View {
 
 // MARK: - Rows
 
-private enum SourceControlStyle {
+enum SourceControlStyle {
     static let font = Font.system(size: 12)
     static let rowHeight: CGFloat = 22
     static let indent: CGFloat = 12
 }
 
-private struct SourceControlSectionHeader: View {
+struct SourceControlSectionHeader: View {
     let title: String
     let count: Int
     let isCollapsed: Bool
