@@ -132,6 +132,19 @@ final class ScriptWindow: NSObject {
         return selectedController ?? controllers.first
     }
 
+    /// Whether a `window id "..."` reference names this window. A window alone in its
+    /// native window is keyed by that window, and by its tab group once it has tabs,
+    /// so a reference taken before its first `new tab` still has to resolve: every
+    /// member window's id counts as well.
+    func matches(uniqueID: String) -> Bool {
+        guard NSApp.isAppleScriptEnabled else { return false }
+        if stableID == uniqueID { return true }
+        return controllers.contains { controller in
+            guard let window = controller.window else { return false }
+            return Self.stableID(window: window) == uniqueID
+        }
+    }
+
     /// Resolves a previously generated tab ID back to a live controller.
     private func controller(tabID: String) -> BaseTerminalController? {
         controllers.first(where: { ScriptTab.stableID(controller: $0) == tabID })

@@ -10,11 +10,15 @@ final class ScriptTab: NSObject {
     /// Stable identifier used by AppleScript `tab id "..."` references.
     private let stableID: String
 
-    /// Weak back-reference to the scripting window that owns this tab wrapper.
+    /// The scripting window that owns this tab wrapper.
     ///
-    /// We only need this for dynamic properties (`index`, `selected`) and for
-    /// building an object specifier path.
-    private weak var window: ScriptWindow?
+    /// We need this for dynamic properties (`index`, `selected`) and for building
+    /// an object specifier path. It is held strongly: scripting windows are made on
+    /// the fly (see `scriptWindows`), so a tab handed back from a command, such as
+    /// `new tab`, would otherwise outlive its window and have no specifier, which
+    /// Cocoa reports as "Can't continue" (-1708). A window doesn't refer back to its
+    /// tabs, so there is no cycle.
+    private let window: ScriptWindow
 
     /// Live terminal controller for this tab.
     ///
@@ -54,7 +58,7 @@ final class ScriptTab: NSObject {
     var index: Int {
         guard NSApp.isAppleScriptEnabled else { return 0 }
         guard let controller else { return 0 }
-        return window?.tabIndex(for: controller) ?? 0
+        return window.tabIndex(for: controller) ?? 0
     }
 
     /// Exposed as the AppleScript `selected` property.
@@ -64,7 +68,7 @@ final class ScriptTab: NSObject {
     var selected: Bool {
         guard NSApp.isAppleScriptEnabled else { return false }
         guard let controller else { return false }
-        return window?.tabIsSelected(controller) ?? false
+        return window.tabIsSelected(controller)
     }
 
     /// Exposed as the AppleScript `focused terminal` property.
@@ -158,7 +162,6 @@ final class ScriptTab: NSObject {
     /// Provides Cocoa scripting with a canonical "path" back to this object.
     override var objectSpecifier: NSScriptObjectSpecifier? {
         guard NSApp.isAppleScriptEnabled else { return nil }
-        guard let window else { return nil }
         guard let windowClassDescription = window.classDescription as? NSScriptClassDescription else {
             return nil
         }

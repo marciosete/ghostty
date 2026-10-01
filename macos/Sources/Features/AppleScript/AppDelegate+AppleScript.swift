@@ -72,12 +72,13 @@ extension NSApplication {
     /// Required selector name pattern for element key `scriptWindows`:
     /// `valueInScriptWindowsWithUniqueID:`.
     ///
-    /// Cocoa calls this when a script resolves `window id "..."`.
+    /// Cocoa calls this when a script resolves `window id "..."`, with the id the
+    /// window had when the script got hold of it (see `ScriptWindow.matches`).
     /// Returning `nil` makes the object specifier fail naturally.
     @objc(valueInScriptWindowsWithUniqueID:)
     func valueInScriptWindows(uniqueID: String) -> ScriptWindow? {
         guard isAppleScriptEnabled else { return nil }
-        return scriptWindows.first(where: { $0.stableID == uniqueID })
+        return scriptWindows.first(where: { $0.matches(uniqueID: uniqueID) })
     }
 }
 
