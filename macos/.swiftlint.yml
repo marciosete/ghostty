@@ -12,6 +12,9 @@ disabled_rules:
   - line_length
   - nesting
   - no_fallthrough_only
+  # Byte streams from Claude Code and the network are decoded lossily on purpose:
+  # a chunk can end mid-character, and a failable decode would drop the whole chunk.
+  - optional_data_string_conversion
   - todo
   - trailing_comma
   - trailing_newline

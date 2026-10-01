@@ -29,7 +29,7 @@ enum RequestExploder {
         }
 
         // 02-tools
-        var toolRows: [(i: Int, name: String, file: String, one: String, size: Int)] = []
+        var toolRows: [ToolRow] = []
         var counters: [String: Int] = [:]
         for (i, tool) in tools.enumerated() {
             let name = tool["name"] as? String ?? tool["type"] as? String ?? "tool"
@@ -64,7 +64,7 @@ enum RequestExploder {
                 "</details>",
             ].joined(separator: "\n")
             let file = out.write("02-tools/\(group)/\(pad(counters[group]!))-\(shortToolName(name)).md", body)
-            toolRows.append((i + 1, name, file, firstSentence(description), chars(description) + chars(schemaJSON)))
+            toolRows.append(ToolRow(i: i + 1, name: name, file: file, one: firstSentence(description), size: chars(description) + chars(schemaJSON)))
         }
         let toolTotal = toolRows.reduce(0) { $0 + $1.size }
         out.write("02-tools/00-index.md", ([
@@ -84,7 +84,7 @@ enum RequestExploder {
             .joined(separator: "\n"))
 
         // 03-messages
-        var messageRows: [(n: String, role: String, file: String, what: String, size: Int)] = []
+        var messageRows: [MessageRow] = []
         for (i, message) in messages.enumerated() {
             let n = pad(i + 1)
             let role = message["role"] as? String ?? "unknown"
@@ -128,7 +128,7 @@ enum RequestExploder {
                         out.write("\(dir)/\(pad(k))-\(type == "text" ? "user-prompt" : type).md", blockText(block) + cacheNote(block))
                     }
                 }
-                messageRows.append((n, role, dir + "/", "context reminders + prompt: “\(first.prefix(80))”", total))
+                messageRows.append(MessageRow(n: n, role: role, file: dir + "/", what: "context reminders + prompt: “\(first.prefix(80))”", size: total))
                 continue
             }
 
@@ -138,7 +138,7 @@ enum RequestExploder {
                 for (k, part) in split(text, at: systemSection).enumerated() {
                     out.write("\(dir)/\(pad(k + 1))-\(shortTitle(part.title)).md", part.text)
                 }
-                messageRows.append((n, role, dir + "/", "mid-conversation system: environment, agents, MCP, skills, mode", total))
+                messageRows.append(MessageRow(n: n, role: role, file: dir + "/", what: "mid-conversation system: environment, agents, MCP, skills, mode", size: total))
                 continue
             }
 
@@ -160,7 +160,7 @@ enum RequestExploder {
                 case let type: return type ?? "block"
                 }
             }.joined(separator: " + ")
-            messageRows.append((n, role, file, what, total))
+            messageRows.append(MessageRow(n: n, role: role, file: file, what: what, size: total))
         }
 
         // 04-settings
@@ -233,6 +233,24 @@ enum RequestExploder {
     }
 
     // MARK: Output
+
+    /// A tool's line in the tools index: its number, name, file, first sentence and size.
+    private struct ToolRow {
+        let i: Int
+        let name: String
+        let file: String
+        let one: String
+        let size: Int
+    }
+
+    /// A message's line in the messages index.
+    private struct MessageRow {
+        let n: String
+        let role: String
+        let file: String
+        let what: String
+        let size: Int
+    }
 
     private struct Output {
         var files: [String: Data] = [:]
@@ -395,11 +413,13 @@ enum RequestExploder {
 
     // MARK: Messages
 
-    private static let sentenceEnd = try! Regex(#"^(.+?[.!?])(\s|$)"#)
-    private static let contentsOfLine = try! Regex(#"(?m)^Contents of "#)
-    private static let contentsOfTitle = try! Regex(#"^Contents of (.+?) \("#)
-    private static let systemSection = try! Regex(
-        #"^(# .+|You are powered by.*|Available agent types.*|The following skills.*|The following deferred tools.*|The following tools just became.*|While auto mode.*)$"#)
+    // Regex literals are checked when compiled, so nothing can throw here. They are
+    // erased to `AnyRegexOutput` since the captures are read by position.
+    private static let sentenceEnd = Regex<AnyRegexOutput>(/^(.+?[.!?])(\s|$)/)
+    private static let contentsOfLine = Regex<AnyRegexOutput>(#/(?m)^Contents of /#)
+    private static let contentsOfTitle = Regex<AnyRegexOutput>(/^Contents of (.+?) \(/)
+    private static let systemSection = Regex<AnyRegexOutput>(
+        /^(# .+|You are powered by.*|Available agent types.*|The following skills.*|The following deferred tools.*|The following tools just became.*|While auto mode.*)$/)
 
     /// Known lead-in lines, and the short file names they get.
     private static let known: [(prefix: String, name: String)] = [

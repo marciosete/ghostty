@@ -5,7 +5,11 @@ import Testing
 @Suite
 struct ClaudeCodeSpeakerTests {
     private func line(_ object: [String: Any]) -> Data {
-        try! JSONSerialization.data(withJSONObject: object)
+        // A fixture that isn't JSON is a mistake in the test, not a case to handle.
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            preconditionFailure("test fixture isn't JSON: \(object)")
+        }
+        return data
     }
 
     private func assistant(id: String?, _ blocks: [[String: Any]], sidechain: Bool = false, model: String = "claude-opus-5-5") -> Data {

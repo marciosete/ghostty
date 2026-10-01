@@ -876,7 +876,7 @@ struct UsageProviderMark: View {
         Image(provider.markImageName)
             .resizable()
             .renderingMode(.template)
-            .aspectRatio(contentMode: .fit)
+            .scaledToFit()
             .foregroundStyle(provider == .claude ? provider.color : .primary)
     }
 }

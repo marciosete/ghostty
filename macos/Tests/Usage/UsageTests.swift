@@ -5,7 +5,11 @@ import Testing
 // Most cases are ported from T3 Code's usage tests (apps/server/src/usage/*.test.ts).
 
 private func json(_ object: [String: Any]) -> Data {
-    try! JSONSerialization.data(withJSONObject: object)
+    // A fixture that isn't JSON is a mistake in the test, not a case to handle.
+    guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+        preconditionFailure("test fixture isn't JSON: \(object)")
+    }
+    return data
 }
 
 private func ms(_ iso: String) -> Int {
