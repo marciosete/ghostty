@@ -441,8 +441,22 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return nil
         }
 
+        // A tab opened right after a grouped tab joins that group, which also keeps the
+        // group's tabs next to each other, and the same goes for a folder. A tab opened
+        // in a folder starts in the folder's directory, wherever the parent's shell is.
+        let inheritsPlace = ghostty.config.windowNewTabPosition != "end"
+        let parentWindow = parent as? TerminalWindow
+        let groupID = inheritsPlace ? parentWindow?.userTabGroupID : nil
+        let folderID = inheritsPlace ? parentWindow?.userTabFolderID : nil
+        let placedConfig: Ghostty.SurfaceConfiguration? = {
+            guard let folder = UserTabFolderStore.shared[folderID] else { return baseConfig }
+            var config = baseConfig ?? Ghostty.SurfaceConfiguration()
+            config.workingDirectory = folder.path
+            return config
+        }()
+
         // Create a new window and add it to the parent
-        let controller = TerminalController.init(ghostty, withBaseConfig: baseConfig)
+        let controller = TerminalController.init(ghostty, withBaseConfig: placedConfig)
         controller.isBackgroundOpaque = parentController.isBackgroundOpaque
         guard let window = controller.window else { return controller }
 
@@ -480,12 +494,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             default:
                 tabCreated = parent.addTabbedWindowSafely(window, ordered: .above)
             }
-            // A tab opened right after a grouped tab joins that group, which also
-            // keeps the group's tabs next to each other.
-            if tabCreated,
-               ghostty.config.windowNewTabPosition != "end",
-               let groupID = (parent as? TerminalWindow)?.userTabGroupID {
-                (window as? TerminalWindow)?.userTabGroupID = groupID
+            if tabCreated, let window = window as? TerminalWindow {
+                if let groupID { window.userTabGroupID = groupID }
+                if let folderID { window.userTabFolderID = folderID }
             }
 
             if tabCreated {
@@ -1036,6 +1047,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         weak var tabGroup: NSWindowTabGroup?
         let tabColor: TerminalTabColor
         let userTabGroupID: UUID?
+        let userTabFolderID: UUID?
     }
 
     convenience init(_ ghostty: Ghostty.App, with undoState: UndoState) {
@@ -1049,6 +1061,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 terminalWindow.tabColor = undoState.tabColor.resolvingFollowing
                 if let groupID = undoState.userTabGroupID, UserTabGroupStore.shared[groupID] != nil {
                     terminalWindow.userTabGroupID = groupID
+                }
+                if let folderID = undoState.userTabFolderID, UserTabFolderStore.shared[folderID] != nil {
+                    terminalWindow.userTabFolderID = folderID
                 }
             }
 
@@ -1095,7 +1110,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             tabIndex: window.tabGroup?.windows.firstIndex(of: window),
             tabGroup: window.tabGroup,
             tabColor: (window as? TerminalWindow)?.tabColor ?? .none,
-            userTabGroupID: (window as? TerminalWindow)?.userTabGroupID)
+            userTabGroupID: (window as? TerminalWindow)?.userTabGroupID,
+            userTabFolderID: (window as? TerminalWindow)?.userTabFolderID)
     }
 
     // MARK: - NSWindowController

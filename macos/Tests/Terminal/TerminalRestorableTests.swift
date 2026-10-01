@@ -108,6 +108,40 @@ struct TerminalRestorableTests {
         #expect(v7Generic.titleOverride == "tip")
         #expect(v7Generic.surfaceTree.contains(where: { $0.id.uuidString == "953CE952-D91D-4D36-AC72-9D0F1F6BCE73" }))
         #expect(v7Generic.surfaceTree.contains(where: { $0.id.uuidString == "D3223569-2E01-4BC5-9DB2-DBFC3AFF46D1" }))
+
+        // State saved before the sidebar had folders has none.
+        #expect(v7Generic.userTabFolder == nil)
+        #expect(v7Generic.sidebarFolders == nil)
+        #expect(v7Generic.sidebarFolderGroups == nil)
+    }
+
+    /// The sidebar's folders and folder groups come back as saved, the way the workspace
+    /// saves them, with a folder that has no sessions among them.
+    @MainActor
+    @Test func foldersRoundTrip() throws {
+        let tree = try SplitTreeTests.makeHorizontalSplit()
+        let work = UserTabFolderGroup(name: "Work", isCollapsed: true)
+        let ghostty = UserTabFolder(name: "Ghostty", path: "/Users/me/ghostty", groupID: work.id)
+        let empty = UserTabFolder(path: "/Users/me/empty", isCollapsed: true)
+        let state = TerminalRestorableState.InternalState<MockView>(
+            focusedSurface: nil,
+            surfaceTree: tree.0,
+            effectiveFullscreenMode: nil,
+            tabColor: nil,
+            titleOverride: nil,
+            userTabGroup: nil,
+            speechVoiceID: nil,
+            userTabFolder: ghostty,
+            sidebarFolders: [ghostty, empty],
+            sidebarFolderGroups: [work])
+
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(TerminalRestorableState.InternalState<MockView>.self, from: data)
+        #expect(decoded.userTabFolder == ghostty)
+        #expect(decoded.sidebarFolders == [ghostty, empty])
+        #expect(decoded.sidebarFolderGroups == [work])
+        #expect(decoded.sidebarFolders?.last?.name == "empty")
+        #expect(decoded.sidebarFolders?.last?.isCollapsed == true)
     }
 }
 

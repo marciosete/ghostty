@@ -197,6 +197,21 @@ class TerminalWindow: NSWindow {
         }
     }
 
+    /// The folder (shown in the tab sidebar) that this tab belongs to. A tab in a group
+    /// is in its group's folder.
+    var userTabFolderID: UUID? {
+        didSet {
+            guard userTabFolderID != oldValue else { return }
+            invalidateRestorableState()
+            applySessionTitle()
+            postTabSidebarItemDidChange()
+        }
+    }
+
+    /// The folders open in this tab's sidebar, shared with the other tabs of its native
+    /// tab group. The sidebar model keeps them pointing at the same one.
+    var folderSpace = TabSidebarFolderSpace()
+
     /// The state behind this window's vertical tab sidebar.
     private(set) lazy var tabSidebarModel = TabSidebarModel(hostWindow: self)
 
@@ -231,9 +246,13 @@ class TerminalWindow: NSWindow {
         // A new tab starts out `auto`, which `tabColor`'s didSet doesn't see.
         ClaudeCodeLights.shared.follow(self)
 
-        // The titlebar shows the group's name, so it follows the group being renamed.
+        // The titlebar shows the folder's and the group's names, so it follows them being
+        // renamed.
         groupNamesCancellable = UserTabGroupStore.shared.$groups
-            .sink { [weak self] groups in self?.applySessionTitle(groups: groups) }
+            .combineLatest(UserTabFolderStore.shared.$folders, UserTabFolderGroupStore.shared.$groups)
+            .sink { [weak self] groups, folders, folderGroups in
+                self?.applySessionTitle(groups: groups, folders: folders, folderGroups: folderGroups)
+            }
 
         // This is fragile, but there doesn't seem to be an official API for customizing
         // native tab bar menus.
@@ -433,8 +452,11 @@ class TerminalWindow: NSWindow {
     }
 
     override func moveTabToNewWindow(_ sender: Any?) {
-        // A tab moved to its own window leaves its group behind.
+        // A tab moved to its own window leaves its group and folder behind, and the
+        // folders of its old sidebar.
         userTabGroupID = nil
+        userTabFolderID = nil
+        folderSpace = TabSidebarFolderSpace()
         super.moveTabToNewWindow(sender)
     }
 
@@ -617,15 +639,28 @@ class TerminalWindow: NSWindow {
 
     private var groupNamesCancellable: AnyCancellable?
 
-    /// Sets the window's title to the session's title, after its group's name if it's in
-    /// a group. `groups` is passed while the store is about to change to it.
-    private func applySessionTitle(groups: [UUID: UserTabGroup] = UserTabGroupStore.shared.groups) {
+    /// Sets the window's title to the session's title, after the names of its folder
+    /// group, its folder and its group when it's in them. The stores' contents are passed
+    /// while they are about to change to them.
+    private func applySessionTitle(
+        groups: [UUID: UserTabGroup] = UserTabGroupStore.shared.groups,
+        folders: [UUID: UserTabFolder] = UserTabFolderStore.shared.folders,
+        folderGroups: [UUID: UserTabFolderGroup] = UserTabFolderGroupStore.shared.groups
+    ) {
         guard let sessionTitle else { return }
-        if let groupName = userTabGroupID.flatMap({ groups[$0]?.name }), !groupName.isEmpty {
-            title = "\(groupName) › \(sessionTitle)"
-        } else {
-            title = sessionTitle
+        var parts: [String] = []
+        let folder = userTabFolderID.flatMap { folders[$0] }
+        if let folderGroupName = folder?.groupID.flatMap({ folderGroups[$0]?.name }), !folderGroupName.isEmpty {
+            parts.append(folderGroupName)
         }
+        if let folderName = folder?.name, !folderName.isEmpty {
+            parts.append(folderName)
+        }
+        if let groupName = userTabGroupID.flatMap({ groups[$0]?.name }), !groupName.isEmpty {
+            parts.append(groupName)
+        }
+        parts.append(sessionTitle)
+        title = parts.joined(separator: " › ")
     }
 
     /// What the titlebar shows of the latest reply, while replies are shown.

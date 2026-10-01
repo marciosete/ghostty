@@ -22,38 +22,54 @@ struct TabSidebarGroupMoveTests {
         order?.map(\.title)
     }
 
-    private func window(_ title: String, in windows: [NSWindow]) -> TerminalWindow {
-        windows.first { $0.title == title } as! TerminalWindow
+    private func window(_ title: String, in windows: [NSWindow]) throws -> TerminalWindow {
+        try #require(windows.first { $0.title == title } as? TerminalWindow)
     }
 
     @Test func aGroupMovesPastAnotherGroupWhole() {
         let windows = windows()
-        #expect(titles(TabSidebarModel.order(windows, movingGroup: b, to: .group(a), after: false))
+        #expect(titles(TabSidebarModel.order(windows, moving: .group(b), to: .group(a), after: false))
             == ["b1", "b2", "b3", "a1", "a2", "loose"])
-        #expect(titles(TabSidebarModel.order(windows, movingGroup: a, to: .group(b), after: true))
+        #expect(titles(TabSidebarModel.order(windows, moving: .group(a), to: .group(b), after: true))
             == ["loose", "b1", "b2", "b3", "a1", "a2"])
     }
 
-    @Test func aGroupDroppedOnATabGoesNextToItOrItsGroup() {
+    @Test func aGroupDroppedOnATabGoesNextToItOrItsGroup() throws {
         let windows = windows()
-        #expect(titles(TabSidebarModel.order(windows, movingGroup: b, to: .tab(window("loose", in: windows)), after: false))
+        let loose = try window("loose", in: windows)
+        #expect(titles(TabSidebarModel.order(windows, moving: .group(b), to: .tab(loose), after: false))
             == ["a1", "a2", "b1", "b2", "b3", "loose"])
 
         // Dropped below a tab in the middle of another group, it goes after all of it.
-        #expect(titles(TabSidebarModel.order(windows, movingGroup: a, to: .tab(window("b2", in: windows)), after: true))
+        let b2 = try window("b2", in: windows)
+        #expect(titles(TabSidebarModel.order(windows, moving: .group(a), to: .tab(b2), after: true))
             == ["loose", "b1", "b2", "b3", "a1", "a2"])
     }
 
     @Test func aGroupMovesToTheEnd() {
         let windows = windows()
-        #expect(titles(TabSidebarModel.order(windows, movingGroup: a, to: .end, after: false))
+        #expect(titles(TabSidebarModel.order(windows, moving: .group(a), to: .end, after: false))
             == ["loose", "b1", "b2", "b3", "a1", "a2"])
     }
 
-    @Test func aGroupDoesNotMoveOntoItself() {
+    @Test func aGroupDoesNotMoveOntoItself() throws {
         let windows = windows()
-        #expect(TabSidebarModel.order(windows, movingGroup: a, to: .group(a), after: false) == nil)
-        #expect(TabSidebarModel.order(windows, movingGroup: a, to: .tab(window("a2", in: windows)), after: false) == nil)
-        #expect(TabSidebarModel.order(windows, movingGroup: UUID(), to: .end, after: false) == nil)
+        let a2 = try window("a2", in: windows)
+        #expect(TabSidebarModel.order(windows, moving: .group(a), to: .group(a), after: false) == nil)
+        #expect(TabSidebarModel.order(windows, moving: .group(a), to: .tab(a2), after: false) == nil)
+        #expect(TabSidebarModel.order(windows, moving: .group(UUID()), to: .end, after: false) == nil)
+    }
+
+    @Test func aFolderMovesWithItsGroupsPastAnotherFolder() throws {
+        let windows = windows()
+        let f1 = UUID()
+        let f2 = UUID()
+        for title in ["a1", "a2"] { try window(title, in: windows).userTabFolderID = f1 }
+        for title in ["loose", "b1", "b2", "b3"] { try window(title, in: windows).userTabFolderID = f2 }
+        let b2 = try window("b2", in: windows)
+        #expect(titles(TabSidebarModel.order(windows, moving: .folder(f1), to: .tab(b2), after: true))
+            == ["loose", "b1", "b2", "b3", "a1", "a2"])
+        #expect(titles(TabSidebarModel.order(windows, moving: .folder(f2), to: .folder(f1), after: false))
+            == ["loose", "b1", "b2", "b3", "a1", "a2"])
     }
 }

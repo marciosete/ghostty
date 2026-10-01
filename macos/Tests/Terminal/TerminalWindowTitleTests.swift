@@ -35,6 +35,33 @@ struct TerminalWindowTitleTests {
         #expect(window.title == "Fix the usage panel")
     }
 
+    @Test func inAFolderShowsTheFolderGroupThenTheFolderThenTheGroup() {
+        let group = UserTabGroupStore.shared.create(name: "Sidebar")
+        defer { UserTabGroupStore.shared.remove(group.id) }
+        let folder = UserTabFolderStore.shared.create(path: "/Users/me/projects/ghostty")
+        defer { UserTabFolderStore.shared.remove(folder.id) }
+        let folderGroup = UserTabFolderGroupStore.shared.create(name: "Work")
+        defer { UserTabFolderGroupStore.shared.remove(folderGroup.id) }
+
+        let window = window()
+        window.sessionTitle = "Fix the usage panel"
+        window.userTabFolderID = folder.id
+        #expect(window.title == "ghostty › Fix the usage panel", "a folder is named after its directory")
+        #expect(window.tab.title == "Fix the usage panel")
+
+        window.userTabGroupID = group.id
+        #expect(window.title == "ghostty › Sidebar › Fix the usage panel")
+
+        UserTabFolderStore.shared.update(folder.id) { $0.groupID = folderGroup.id }
+        #expect(window.title == "Work › ghostty › Sidebar › Fix the usage panel")
+
+        UserTabFolderStore.shared.update(folder.id) { $0.name = "Ghostty" }
+        #expect(window.title == "Work › Ghostty › Sidebar › Fix the usage panel")
+
+        window.userTabFolderID = nil
+        #expect(window.title == "Sidebar › Fix the usage panel")
+    }
+
     @Test func renamingLeavesOutClaudeCodeStatus() {
         #expect(BaseTerminalController.withoutClaudeCodeStatus("◑ Process Review") == "Process Review")
         #expect(BaseTerminalController.withoutClaudeCodeStatus("◐ Process Review") == "Process Review")

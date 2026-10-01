@@ -82,6 +82,15 @@ final class TerminalRestorableState: TerminalRestorable {
     var speechVoiceID: String? {
         internalState.speechVoiceID
     }
+    var userTabFolder: UserTabFolder? {
+        internalState.userTabFolder
+    }
+    var sidebarFolders: [UserTabFolder] {
+        internalState.sidebarFolders ?? []
+    }
+    var sidebarFolderGroups: [UserTabFolderGroup] {
+        internalState.sidebarFolderGroups ?? []
+    }
 
     /// Internal State we use to perform unit tests
     ///
@@ -133,6 +142,21 @@ final class TerminalRestorableState: TerminalRestorable {
         if let userTabGroup {
             UserTabGroupStore.shared.register(userTabGroup)
             (window as? TerminalWindow)?.userTabGroupID = userTabGroup.id
+        }
+
+        // Restore the folders of the tab's sidebar with their groups, and the tab's own
+        // folder. The sidebar model joins the folders of the tabs restored into one window.
+        for group in sidebarFolderGroups {
+            UserTabFolderGroupStore.shared.register(group)
+        }
+        for folder in sidebarFolders {
+            UserTabFolderStore.shared.register(folder)
+        }
+        (window as? TerminalWindow)?.folderSpace = TabSidebarFolderSpace(folderIDs: sidebarFolders.map(\.id))
+        if let userTabFolder {
+            UserTabFolderStore.shared.register(userTabFolder)
+            (window as? TerminalWindow)?.folderSpace.add(userTabFolder.id)
+            (window as? TerminalWindow)?.userTabFolderID = userTabFolder.id
         }
 
         // Setup our restored state on the controller
