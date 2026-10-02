@@ -659,8 +659,10 @@ final class TabSidebarModel: ObservableObject {
         guard let hostWindow,
               let hostController = hostWindow.terminalController else { return nil }
 
-        let folderID = groupID.flatMap { folder(ofGroup: $0) } ?? inFolder
-        let folder = UserTabFolderStore.shared[folderID]
+        // Named apart from `folder(ofGroup:)`: a local `folder` next to that call reads
+        // as a circular reference to Xcode 26's compiler.
+        let folderID = groupID.flatMap { self.folder(ofGroup: $0) } ?? inFolder
+        let tabFolder = UserTabFolderStore.shared[folderID]
 
         let anchor: NSWindow
         var source: TerminalWindow = hostWindow
@@ -683,9 +685,9 @@ final class TabSidebarModel: ObservableObject {
         if let surface = source.terminalController?.focusedSurface?.surface {
             baseConfig = .init(from: ghostty_surface_inherited_config(surface, GHOSTTY_SURFACE_CONTEXT_TAB))
         }
-        if let folder {
+        if let tabFolder {
             var config = baseConfig ?? Ghostty.SurfaceConfiguration()
-            config.workingDirectory = folder.path
+            config.workingDirectory = tabFolder.path
             baseConfig = config
         }
 
@@ -696,12 +698,12 @@ final class TabSidebarModel: ObservableObject {
               let window = controller.window as? TerminalWindow else { return nil }
 
         window.userTabGroupID = groupID
-        window.userTabFolderID = folder?.id
+        window.userTabFolderID = tabFolder?.id
         if let groupID {
             UserTabGroupStore.shared.update(groupID) { $0.isCollapsed = false }
         }
-        if let folder {
-            UserTabFolderStore.shared.update(folder.id) { $0.isCollapsed = false }
+        if let tabFolder {
+            UserTabFolderStore.shared.update(tabFolder.id) { $0.isCollapsed = false }
         }
 
         // The group changed after the new tab was prepared, so the sidebar it shows
