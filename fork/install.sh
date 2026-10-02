@@ -103,11 +103,16 @@ build_and_stage() {
     trap 'rm -rf "$WORK"' EXIT
     local staging="$WORK/$APP_NAME.app"
 
-    # A local build is version 0.1 build 1, so the feed's builds, numbered by commit
-    # count, always count as newer. The source root is the checkout "Update Maggie
-    # from Source…" builds.
+    # The version the checkout would release and its commit count as the build
+    # number, as the release workflow does, so a build of a released commit is that
+    # release, and a release made later counts as newer. The source root is the
+    # checkout "Update Maggie from Source…" builds.
+    local version build
+    version="$(cd "$ROOT" && fork/next-version.sh | sed -n 's/^version=//p')"
+    build="$(git -C "$ROOT" rev-list --count HEAD)"
     APP_NAME="$APP_NAME" BUNDLE_ID="$BUNDLE_ID" "$ROOT/fork/package.sh" "$BUILT" "$staging" \
-        --commit "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+        --version "$version" --build "$build" \
+        --commit "$(git -C "$ROOT" rev-parse --short HEAD)" \
         --source-root "$ROOT"
 
     # macOS ties privacy answers to the signature. An ad hoc one changes with every
