@@ -3,9 +3,9 @@ import AppKit
 /// Saves the open terminal windows and opens them again later: every tab in order with
 /// its color, title, splits and working directories, the tab sidebar groups with their
 /// names, colors and collapsed state, and the sidebar's folders and folder groups, with
-/// the folders that have no sessions. A Claude Code session running in a terminal
-/// is resumed in it (see `ClaudeCodeSession`); other programs aren't, and the terminal
-/// opens a new shell.
+/// the folders that have no sessions. A Claude Code or Codex session running in a
+/// terminal is resumed in it (see `AgentSession`); other programs aren't, and the
+/// terminal opens a new shell.
 ///
 /// macOS state restoration only brings windows back when "Close windows when quitting
 /// an application" is off in System Settings (it is on by default), and it forgets

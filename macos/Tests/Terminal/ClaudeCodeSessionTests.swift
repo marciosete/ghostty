@@ -145,11 +145,13 @@ struct ClaudeCodeSessionTests {
             uuid: UUID(uuidString: "926F3F2A-824C-40C9-87CA-2CDCA4E11049"),
             title: "✳ riverbed-demo",
             isUserSetTitle: false,
-            claudeCodeSession: Self.session)
+            agentSession: .claude(Self.session))
         let data = try JSONEncoder().encode(state)
         let decoded = try JSONDecoder().decode(Ghostty.SurfaceView.RestorableState.self, from: data)
 
-        #expect(decoded.claudeCodeSession == Self.session)
+        // Saved under the key builds before Codex read, so a workspace saved now opens there.
+        #expect(String(decoding: data, as: UTF8.self).contains("\"claudeCodeSession\""))
+        #expect(decoded.agentSession == .claude(Self.session))
         #expect(decoded.pwd == "/Users/me/project/src")
         #expect(decoded.uuid == state.uuid)
         #expect(decoded.title == "✳ riverbed-demo")
@@ -161,7 +163,29 @@ struct ClaudeCodeSessionTests {
         #expect(config.command == nil)
 
         // Shell startup files that start Claude Code in every new terminal can skip it.
-        #expect(config.environmentVariables == ["GHOSTTY_CLAUDE_CODE_RESUME": "2f19b620-e06f-43d9-9cfe-fc93924c3c2d"])
+        #expect(config.environmentVariables == [
+            "GHOSTTY_CLAUDE_CODE_RESUME": "2f19b620-e06f-43d9-9cfe-fc93924c3c2d",
+            "MAGGIE_CLAUDE_CODE_START": "1",
+            "MAGGIE_AGENT": "claude",
+        ])
+    }
+
+    @Test func savedSurfaceWithCodexSession() throws {
+        let codex = CodexSession(id: UUID(uuidString: "01a0b160-4a3f-76f3-8ebb-6c2151615b9a")!, cwd: "/Users/me/project")
+        let state = Ghostty.SurfaceView.RestorableState(
+            pwd: "/Users/me/project/src",
+            uuid: UUID(uuidString: "926F3F2A-824C-40C9-87CA-2CDCA4E11049"),
+            title: "codex",
+            isUserSetTitle: false,
+            agentSession: .codex(codex))
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(Ghostty.SurfaceView.RestorableState.self, from: data)
+
+        #expect(decoded.agentSession == .codex(codex))
+        let config = decoded.surfaceConfiguration
+        #expect(config.workingDirectory == "/Users/me/project")
+        #expect(config.initialInput == "codex resume 01a0b160-4a3f-76f3-8ebb-6c2151615b9a\n")
+        #expect(config.environmentVariables == ["MAGGIE_CLAUDE_CODE_START": "1", "MAGGIE_AGENT": "codex"])
     }
 
     /// A surface saved by an earlier build.
@@ -171,7 +195,7 @@ struct ClaudeCodeSessionTests {
             """
         let decoded = try JSONDecoder().decode(Ghostty.SurfaceView.RestorableState.self, from: Data(json.utf8))
 
-        #expect(decoded.claudeCodeSession == nil)
+        #expect(decoded.agentSession == nil)
         #expect(decoded.title == "notes")
         #expect(decoded.isUserSetTitle)
 
@@ -188,7 +212,7 @@ struct ClaudeCodeSessionTests {
             """
         let decoded = try JSONDecoder().decode(Ghostty.SurfaceView.RestorableState.self, from: Data(json.utf8))
 
-        #expect(decoded.claudeCodeSession == nil)
+        #expect(decoded.agentSession == nil)
         #expect(decoded.surfaceConfiguration.workingDirectory == "/Users/me/project")
         #expect(decoded.surfaceConfiguration.initialInput == nil)
     }

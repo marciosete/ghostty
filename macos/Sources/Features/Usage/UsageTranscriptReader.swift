@@ -88,6 +88,9 @@ enum UsageTranscriptReader {
         let parser = LineParser(provider: provider)
         var start = 0
         var resumed = false
+        // A Codex rollout's later lines depend on its earlier ones (the model, the session
+        // id), which a resume would skip, so it is always read whole.
+        let resume = provider == .codex ? nil : resume
         if let resume, resume.resumeOffset > 0,
            guardHash(fd: fd, end: resume.resumeOffset, length: resume.guardLength) == resume.guardHash {
             start = resume.resumeOffset
@@ -179,8 +182,15 @@ enum UsageTranscriptReader {
 
 /// Parses the lines of one transcript, skipping lines that can't carry usage before
 /// decoding any JSON. Transcripts are mostly tool output, so this skips most of them.
-private struct LineParser {
+private final class LineParser {
     let provider: UsageProvider
+
+    /// What a Codex rollout said so far.
+    private var codexState = UsageTranscripts.CodexScanState()
+
+    init(provider: UsageProvider) {
+        self.provider = provider
+    }
 
     func parse(_ line: UnsafeRawBufferPointer, into records: inout [UsageRecord]) {
         var line = line
@@ -193,6 +203,14 @@ private struct LineParser {
         case .claude:
             guard Self.contains(line, "\"usage\"") else { return }
             if let record = UsageTranscripts.parseClaudeLine(Self.data(line)) {
+                records.append(record)
+            }
+
+        case .codex:
+            // The header and each turn's context are needed too, for the session and model.
+            guard Self.contains(line, "\"token_count\"") || Self.contains(line, "\"session_meta\"")
+                || Self.contains(line, "\"turn_context\"") else { return }
+            if let record = UsageTranscripts.parseCodexLine(Self.data(line), state: &codexState) {
                 records.append(record)
             }
 

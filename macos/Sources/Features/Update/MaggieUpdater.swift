@@ -3,7 +3,7 @@ import AppKit
 /// Updates Maggie, installed by `fork/install.sh`, from the checkout it was built from:
 /// builds and stages the new version while this one keeps running, then quits and
 /// leaves the script to put the new version in place and open it.
-/// The workspace is saved on quit, so windows, tabs and Claude Code sessions come back.
+/// The workspace is saved on quit, so windows, tabs and agent sessions come back.
 @MainActor
 final class MaggieUpdater: NSObject {
     static let shared = MaggieUpdater()
@@ -52,7 +52,7 @@ final class MaggieUpdater: NSObject {
         alert.informativeText = """
             Builds the latest version from \(script.deletingLastPathComponent().deletingLastPathComponent().path). \
             That takes a few minutes, and \(Self.appName) keeps working meanwhile. Then it restarts, \
-            and your windows, tabs and Claude Code sessions open again.
+            and your windows, tabs and agent sessions open again.
             """
         alert.addButton(withTitle: "Update")
         alert.addButton(withTitle: "Cancel")

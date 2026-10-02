@@ -47,7 +47,7 @@ extension AppDelegate {
         viewMenu.insertItem(toggleUsage, at: 4)
         MainActor.assumeIsolated {
             ClaudeStreams.shared.installMenuItem(in: viewMenu, at: 5)
-            ClaudeCodeStart.shared.installMenuItem(in: viewMenu, at: 6)
+            AgentStart.shared.installMenuItem(in: viewMenu, at: 6)
         }
         viewMenu.insertItem(.separator(), at: 7)
 

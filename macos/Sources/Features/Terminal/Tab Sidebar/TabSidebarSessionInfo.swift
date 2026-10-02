@@ -2,8 +2,8 @@ import AppKit
 import Combine
 
 /// Where a session works, shown on its extended row, in its hover card and copied from its
-/// menu: the directory of its Claude Code session, or else of its focused terminal, and
-/// the branch checked out there. With the model its Claude Code is using.
+/// menu: the directory of its agent session, or else of its focused terminal, and the
+/// branch checked out there. With the model its agent is using.
 struct TabSidebarSessionInfo: Equatable {
     /// The directory, when a terminal has reported one.
     var directory: String?
@@ -18,15 +18,15 @@ struct TabSidebarSessionInfo: Equatable {
     /// `directory` is in a linked worktree, such as one `claude --worktree` made.
     var isLinkedWorktree: Bool { checkout?.isLinkedWorktree ?? false }
 
-    /// The Claude Code sessions running in the tab's terminals.
-    var claudeSessions: [ClaudeCodeSession] = []
+    /// The agent sessions, Claude Code or Codex, running in the tab's terminals.
+    var sessions: [AgentSession] = []
 
-    /// When a Claude Code session last wrote to its transcript, which says how long ago a
+    /// When an agent session last wrote to its transcript, which says how long ago a
     /// session found already finished did its last work.
     var lastActive: Date?
 
-    /// The model of the last response of the tab's Claude Code session, which is the model
-    /// it is using.
+    /// The model of the last response of the tab's agent session, which is the model it
+    /// is using.
     var model: String?
 
     /// `directory` with the home directory as `~`.
@@ -70,12 +70,12 @@ final class TabSidebarSessionInfoReader {
 
     private func info(for request: Request) -> TabSidebarSessionInfo {
         var info = TabSidebarSessionInfo()
-        info.claudeSessions = request.pids.compactMap(ClaudeCodeSession.running(pid:))
-        info.directory = info.claudeSessions.first?.cwd ?? request.directory
-        info.lastActive = info.claudeSessions
+        info.sessions = request.pids.compactMap(AgentSession.running(pid:))
+        info.directory = info.sessions.first?.cwd ?? request.directory
+        info.lastActive = info.sessions
             .compactMap { $0.transcript.flatMap(Self.modified) }
             .max()
-        info.model = info.claudeSessions.first?.transcript.flatMap(model(of:))
+        info.model = info.sessions.first.flatMap(model(of:))
 
         info.checkout = info.directory.flatMap(checkout(of:))
         return info
@@ -85,13 +85,18 @@ final class TabSidebarSessionInfoReader {
         (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
-    private func model(of transcript: URL) -> String? {
-        guard let modified = Self.modified(transcript) else { return nil }
+    private func model(of session: AgentSession) -> String? {
+        guard let transcript = session.transcript, let modified = Self.modified(transcript) else { return nil }
         if let known = models[transcript], known.modified == modified {
             return known.value
         }
         // A response too far back to read leaves the model it was known to be.
-        let value = ClaudeCodeResponse.model(inTranscript: transcript) ?? models[transcript]?.value
+        let read: String?
+        switch session {
+        case .claude: read = ClaudeCodeResponse.model(inTranscript: transcript)
+        case .codex: read = CodexSession.Rollout.model(of: transcript)
+        }
+        let value = read ?? models[transcript]?.value
         models[transcript] = (value, modified)
         return value
     }
@@ -106,7 +111,7 @@ final class TabSidebarSessionInfoReader {
     }
 }
 
-/// What a Claude Code session has used so far, by model: the tokens, and their cost priced
+/// What an agent session has used so far, by model: the tokens, and their cost priced
 /// like the usage panel prices it, with the rates the panel last downloaded.
 enum ClaudeCodeSessionCost {
     struct ModelUsage: Equatable {
@@ -126,9 +131,11 @@ enum ClaudeCodeSessionCost {
 
     /// Calls `completion` on the main thread with what `sessions` used, most costly model
     /// first, or nil when none of them has a transcript.
-    static func usage(of sessions: [ClaudeCodeSession], completion: @escaping ([ModelUsage]?) -> Void) {
+    static func usage(of sessions: [AgentSession], completion: @escaping ([ModelUsage]?) -> Void) {
         queue.async {
-            let transcripts = sessions.compactMap(\.transcript)
+            let transcripts = sessions.compactMap { session in
+                session.transcript.map { (url: $0, provider: session.agent.usageProvider) }
+            }
             let usage = transcripts.isEmpty ? nil : usage(of: transcripts, rates: loadRates())
             DispatchQueue.main.async { completion(usage) }
         }
@@ -144,9 +151,11 @@ enum ClaudeCodeSessionCost {
         return table
     }
 
-    static func usage(of transcripts: [URL], rates: UsageRateTable) -> [ModelUsage] {
-        let records = transcripts.flatMap { url -> [UsageRecord] in
-            guard let result = UsageTranscriptReader.read(path: url.path, provider: .claude) else { return [] }
+    static func usage(of transcripts: [(url: URL, provider: UsageProvider)], rates: UsageRateTable) -> [ModelUsage] {
+        let records = transcripts.flatMap { transcript -> [UsageRecord] in
+            guard let result = UsageTranscriptReader.read(path: transcript.url.path, provider: transcript.provider) else {
+                return []
+            }
             return result.records + result.tailRecords
         }
         return usage(of: records, rates: rates)

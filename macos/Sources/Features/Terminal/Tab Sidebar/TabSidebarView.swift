@@ -1152,7 +1152,7 @@ private struct TabSidebarTabRow: View {
                 Button("Mark as Unread") { window.markClaudeCodeActivityUnseen() }
             }
 
-            if let info, info.directory != nil || info.branch != nil || !info.claudeSessions.isEmpty {
+            if let info, info.directory != nil || info.branch != nil || !info.sessions.isEmpty {
                 Divider()
                 if let directory = info.directory {
                     Button("Copy Path") { Self.copy(directory) }
@@ -1160,7 +1160,7 @@ private struct TabSidebarTabRow: View {
                 if let branch = info.branch {
                     Button("Copy Branch") { Self.copy(branch) }
                 }
-                if let session = info.claudeSessions.first {
+                if let session = info.sessions.first {
                     Button("Copy Session ID") { Self.copy(session.id.uuidString.lowercased()) }
                 }
             }

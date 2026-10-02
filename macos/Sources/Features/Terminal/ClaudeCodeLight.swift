@@ -256,11 +256,18 @@ struct ClaudeCodeActivity: Equatable {
 }
 
 /// Follows a transcript to collect the files the session edited. Only what was added to
-/// the transcript since the last read is read.
+/// the transcript since the last read is read. Reads Claude Code's transcripts and
+/// Codex's rollouts, which name their edits differently.
 final class ClaudeCodeEditTracker {
     /// Absolute paths of the files the session edited, in the order first edited.
     private(set) var files: [String] = []
     private var seen: Set<String> = []
+
+    private let agent: CodingAgent
+
+    init(agent: CodingAgent = .claude) {
+        self.agent = agent
+    }
 
     /// Where the next read starts: just after the last complete line.
     private var offset: UInt64 = 0
@@ -308,6 +315,13 @@ final class ClaudeCodeEditTracker {
 
     /// Reads one transcript line.
     func consume(line: Data) {
+        switch agent {
+        case .claude: consumeClaude(line: line)
+        case .codex: consumeCodex(line: line)
+        }
+    }
+
+    private func consumeClaude(line: Data) {
         guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               entry["isSidechain"] as? Bool != true,
               let message = entry["message"] as? [String: Any],
@@ -317,11 +331,30 @@ final class ClaudeCodeEditTracker {
             guard let name = block["name"] as? String,
                   let key = Self.editTools[name],
                   let input = block["input"] as? [String: Any],
-                  let path = input[key] as? String,
-                  path.hasPrefix("/"),
-                  seen.insert(path).inserted else { continue }
-            files.append(path)
+                  let path = input[key] as? String else { continue }
+            add(path)
         }
+    }
+
+    /// Codex records each edit it finished as a `FileChange` item, whose changes are
+    /// keyed by the file's absolute path.
+    private func consumeCodex(line: Data) {
+        guard line.range(of: Data("\"FileChange\"".utf8)) != nil,
+              let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              entry["type"] as? String == "event_msg",
+              let payload = entry["payload"] as? [String: Any],
+              payload["type"] as? String == "item_completed",
+              let item = payload["item"] as? [String: Any],
+              item["type"] as? String == "FileChange",
+              let changes = item["changes"] as? [String: Any] else { return }
+        for path in changes.keys.sorted() {
+            add(path)
+        }
+    }
+
+    private func add(_ path: String) {
+        guard path.hasPrefix("/"), seen.insert(path).inserted else { return }
+        files.append(path)
     }
 }
 
@@ -336,6 +369,10 @@ final class ClaudeCodeEditTracker {
 ///
 /// Which terminals run Claude Code is checked when an entry is added or removed (Claude
 /// Code starting or exiting) and every few seconds, which catches the rest.
+///
+/// A Codex session has no registry entry. Its rollout, which Codex appends to as the
+/// session goes, is watched instead, and the state is read off its end. The rescan
+/// notices Codex exiting, when the terminal's foreground process changes.
 @MainActor
 final class ClaudeCodeLights {
     static let shared = ClaudeCodeLights()
@@ -483,17 +520,21 @@ final class ClaudeCodeLights {
 
     // MARK: Sessions
 
-    /// Watches the registry entry of process `pid`, if it has one, and reads it.
+    /// Watches the registry entry of process `pid`, if it has one, or its Codex rollout
+    /// if it has one of those, and reads it.
     private func watchEntry(of pid: Int) {
-        guard let watch = Self.watch(ClaudeCodeSession.registryFile(pid: pid), events: [.write, .extend, .delete, .rename], handler: { [weak self] watch in
+        let file = ClaudeCodeSession.registryFile(pid: pid)
+        let entry = FileManager.default.fileExists(atPath: file.path) ? file : CodexSession.running(pid: pid)?.rollout
+        guard let entry else { return }
+        guard let watch = Self.watch(entry, events: [.write, .extend, .delete, .rename], handler: { [weak self] watch in
             guard let self else { return }
             if watch.data.contains(.delete) || watch.data.contains(.rename) {
-                // Claude Code exited. The entry may come back under the same process, so it
+                // The agent exited. The entry may come back under the same process, so it
                 // is looked for again.
                 self.forget(pid)
                 self.rescan()
             } else {
-                self.read(pid)
+                self.readOnceSettled(pid)
             }
         }) else { return }
         entryWatches[pid] = watch
@@ -621,7 +662,7 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
     private var repositories: [String: Git.Repository?] = [:]
 
     func read(pid: Int) -> Reading {
-        guard let (session, status) = ClaudeCodeSession.activity(pid: pid) else {
+        guard let (session, status) = Self.activity(pid: pid) else {
             let exists = FileManager.default.fileExists(atPath: ClaudeCodeSession.registryFile(pid: pid).path)
             return exists ? .unreadable : .session(nil, watchWhileIdle: [])
         }
@@ -632,7 +673,7 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
         }
 
         if transcripts[session.id] == nil, let url = session.transcript {
-            transcripts[session.id] = (url, ClaudeCodeEditTracker())
+            transcripts[session.id] = (url, ClaudeCodeEditTracker(agent: session.agent))
         }
 
         // A session in its own worktree owns every change there, however it made them, so
@@ -660,6 +701,19 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
         let edited = byRepository.values.reduce(0) { $0 + $1.count }
         let watch = [transcript.url] + byRepository.keys.map(\.gitDir)
         return .session(Self.state(status: status, pendingFiles: pending, editedFiles: edited), watchWhileIdle: watch)
+    }
+
+    /// The session process `pid` runs and what it is doing: Claude Code from its registry
+    /// entry, Codex from the end of its rollout. A Codex session that hasn't had a turn
+    /// yet is idle.
+    private static func activity(pid: Int) -> (session: AgentSession, status: String)? {
+        if let (session, status) = ClaudeCodeSession.activity(pid: pid) {
+            return (.claude(session), status)
+        }
+        if let session = CodexSession.running(pid: pid) {
+            return (.codex(session), session.status ?? "idle")
+        }
+        return nil
     }
 
     /// The state of an idle session running in `worktree`. Watches the worktree's git

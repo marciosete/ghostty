@@ -158,6 +158,95 @@ struct UsageGrokParserTests {
     }
 }
 
+// MARK: - Codex
+
+struct UsageCodexParserTests {
+    private func line(_ type: String, _ payload: [String: Any], at timestamp: String = "2026-09-17T21:58:09.000Z") -> Data {
+        try! JSONSerialization.data(withJSONObject: ["timestamp": timestamp, "type": type, "payload": payload]) // swiftlint:disable:this force_try
+    }
+
+    private func tokenCount(input: Int, cached: Int = 0, output: Int, reasoning: Int = 0, at timestamp: String = "2026-09-17T21:58:09.000Z") -> Data {
+        line("event_msg", [
+            "type": "token_count",
+            "info": [
+                "total_token_usage": ["input_tokens": 0, "output_tokens": 0],
+                "last_token_usage": [
+                    "input_tokens": input,
+                    "cached_input_tokens": cached,
+                    "cache_write_input_tokens": 0,
+                    "output_tokens": output,
+                    "reasoning_output_tokens": reasoning,
+                ],
+            ],
+        ], at: timestamp)
+    }
+
+    private let meta: [String: Any] = ["id": "thread-1", "cwd": "/Users/me/project", "source": "cli"]
+
+    @Test func carriesTheModelAndSessionForward() {
+        var state = UsageTranscripts.CodexScanState()
+        #expect(UsageTranscripts.parseCodexLine(line("session_meta", meta), state: &state) == nil)
+        // No model yet: not counted, and not remembered as the last event either.
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10), state: &state) == nil)
+        #expect(UsageTranscripts.parseCodexLine(line("turn_context", ["model": "gpt-5-codex"]), state: &state) == nil)
+
+        let record = UsageTranscripts.parseCodexLine(tokenCount(input: 100, cached: 60, output: 10, reasoning: 4), state: &state)
+        #expect(record?.provider == .codex)
+        #expect(record?.model == "gpt-5-codex")
+        #expect(record?.sessionId == "thread-1")
+        #expect(record?.timestampMs == 1_789_682_289_000)
+        #expect(record?.totals == UsageTokenTotals(uncachedInput: 40, cachedInput: 60, output: 10, reasoning: 4))
+        #expect(record?.reportedCostUsd == nil)
+        #expect(record?.dedupeKey == nil)
+    }
+
+    @Test func dropsTheCopyOfAnUnchangedEvent() {
+        var state = UsageTranscripts.CodexScanState()
+        _ = UsageTranscripts.parseCodexLine(line("turn_context", ["model": "gpt-5-codex"]), state: &state)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10), state: &state) != nil)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10), state: &state) == nil)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 11), state: &state) != nil)
+    }
+
+    @Test func aForkSkipsTheCopiedHistory() {
+        var state = UsageTranscripts.CodexScanState()
+        var forked = meta
+        forked["forked_from_id"] = "thread-0"
+        _ = UsageTranscripts.parseCodexLine(line("session_meta", forked, at: "2026-09-17T21:58:00.000Z"), state: &state)
+        // The parent's meta follows; it mustn't take over the session id.
+        _ = UsageTranscripts.parseCodexLine(line("session_meta", ["id": "thread-0", "cwd": "/x"]), state: &state)
+        _ = UsageTranscripts.parseCodexLine(line("turn_context", ["model": "gpt-5-codex"]), state: &state)
+
+        // Copies land within milliseconds of each other.
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 10, output: 1, at: "2026-09-17T21:58:00.010Z"), state: &state) == nil)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 20, output: 2, at: "2026-09-17T21:58:00.030Z"), state: &state) == nil)
+        // The fork's own first turn comes seconds later.
+        let own = UsageTranscripts.parseCodexLine(tokenCount(input: 30, output: 3, at: "2026-09-17T21:58:07.000Z"), state: &state)
+        #expect(own?.sessionId == "thread-1")
+        #expect(own?.totals.output == 3)
+    }
+
+    @Test func readsAWholeRollout() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("maggie-codex-usage-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var data = Data()
+        for part in [line("session_meta", meta), line("turn_context", ["model": "gpt-5-codex"]), tokenCount(input: 100, output: 10), tokenCount(input: 200, output: 20)] {
+            data.append(part)
+            data.append(UInt8(ascii: "\n"))
+        }
+        try data.write(to: url)
+
+        let result = try #require(UsageTranscriptReader.read(path: url.path, provider: .codex))
+        #expect(result.records.map(\.totals.output) == [10, 20])
+        #expect(result.records.allSatisfy { $0.model == "gpt-5-codex" && $0.sessionId == "thread-1" })
+
+        // Resuming is refused: the later lines need the earlier ones.
+        let again = try #require(UsageTranscriptReader.read(path: url.path, provider: .codex, resumingFrom: result.position))
+        #expect(!again.resumed)
+        #expect(again.records.count == 2)
+    }
+}
+
 // MARK: - Pricing
 
 struct UsagePricingTests {

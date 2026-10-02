@@ -97,6 +97,31 @@ enum RunningProcess {
         return withUnsafeBytes(of: &info.pvip.vip_path) { path(in: $0) }.map(URL.init(fileURLWithPath:))
     }
 
+    /// The regular files the process has open, in no particular order. A process can
+    /// have the same file open more than once.
+    static func openFiles(_ pid: pid_t) -> [String] {
+        let bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard bytes > 0 else { return [] }
+        // Room for files opened since counting.
+        let count = Int(bytes) / MemoryLayout<proc_fdinfo>.size + 16
+        var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: count)
+        let read = fds.withUnsafeMutableBytes {
+            proc_pidinfo(pid, PROC_PIDLISTFDS, 0, $0.baseAddress, Int32($0.count))
+        }
+        guard read > 0 else { return [] }
+
+        var paths: [String] = []
+        for fd in fds.prefix(Int(read) / MemoryLayout<proc_fdinfo>.size) where fd.proc_fdtype == PROX_FDTYPE_VNODE {
+            var info = vnode_fdinfowithpath()
+            let size = Int32(MemoryLayout<vnode_fdinfowithpath>.size)
+            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDVNODEPATHINFO, &info, size) == size,
+                  mode_t(truncatingIfNeeded: info.pvip.vip_vi.vi_stat.vst_mode) & S_IFMT == S_IFREG,
+                  let path = withUnsafeBytes(of: &info.pvip.vip_path, { path(in: $0) }) else { continue }
+            paths.append(path)
+        }
+        return paths
+    }
+
     private static func path(in bytes: UnsafeRawBufferPointer) -> String? {
         let characters = bytes.prefix { $0 != 0 }
         return characters.isEmpty ? nil : String(decoding: characters, as: UTF8.self)

@@ -4,7 +4,7 @@
   <br>Maggie
 </h1>
   <p align="center">
-    A macOS terminal for a flock of Claude Code sessions. Built on Ghostty.
+    A macOS terminal for a flock of Claude Code and Codex sessions. Built on Ghostty.
     <br />
     <a href="#what-it-does">What it does</a>
     ·
@@ -19,27 +19,30 @@
 </p>
 
 Maggie is [Ghostty](https://ghostty.org) with a sidebar that knows what every
-[Claude Code](https://claude.com/product/claude-code) session in it is doing.
+[Claude Code](https://claude.com/product/claude-code) or
+[Codex](https://developers.openai.com/codex/cli) session in it is doing.
 Run a dozen sessions across worktrees, see at a glance which ones are working,
 which are waiting on you and which are done, and watch the cost and the token
 rate as they go. It is a real terminal underneath: Ghostty's renderer, Ghostty's
 config, Ghostty's shell integration.
 
 Maggie is macOS only. It is an independent project and is not affiliated with
-Ghostty or Anthropic.
+Ghostty, Anthropic or OpenAI.
 
 ## What it does
 
-**A new session is a Claude Code session.** Open a tab, split or window and
-Claude Code starts in it. In a git repository it gets its own worktree
-(`claude -w`), so what it changes is its own, and a session opened from a
-worktree starts from the main checkout, so two never share one. `/exit` drops
-to the shell and the tab stays. Turn it off under **View › Start Claude Code
-in New Sessions**; a shell startup file that starts Claude Code itself can
-check `MAGGIE_CLAUDE_CODE_START`, set in these terminals, and stand down.
+**A new session is an agent session.** Open a tab, split or window and your
+agent starts in it: Claude Code or Codex, whichever **Settings…** (⌘,) says.
+In a git repository it gets its own worktree (`claude -w`, `codex --worktree`),
+so what it changes is its own, and a session opened from a worktree starts from
+the main checkout, so two never share one. `/exit` drops to the shell and the
+tab stays. Turn it off in Settings or under **View › Start … in New Sessions**;
+a shell startup file that starts an agent itself can check
+`MAGGIE_CLAUDE_CODE_START`, set in these terminals (with `MAGGIE_AGENT` naming
+the agent), and stand down.
 
 **A sidebar of sessions.** Tabs are vertical, named, grouped and searchable. A
-session's tab takes the colour of what its Claude Code is doing:
+session's tab takes the colour of what its agent is doing:
 
 | Colour | Meaning                                                              |
 | ------ | -------------------------------------------------------------------- |
@@ -49,29 +52,32 @@ session's tab takes the colour of what its Claude Code is doing:
 | teal   | committed in its worktree, not yet landed on the main checkout       |
 | none   | finished, everything committed and landed                            |
 
-Pick **Auto** to follow Claude Code, **Attention** to only light up when a
+Pick **Auto** to follow the agent, **Attention** to only light up when a
 session needs you, or any fixed colour. Hover a session for its models, tokens
 and cost; an extended row shows its project and what it is doing; a speaker on
-the tab reads its last reply aloud.
+the tab reads a Claude Code session's last reply aloud. (Codex doesn't say when
+it is waiting on you, so a Codex session shows blue until its turn ends.)
 
 **A workspace that comes back.** Quit and reopen, and every window, tab, split
-and Claude Code session is restored where it was, resumed with `claude --resume`.
-New tabs open in their group's folder.
+and agent session is restored where it was, resumed with `claude --resume` or
+`codex resume`. New tabs open in their group's folder.
 
-**Worktrees and source control.** A session started with `claude -w` runs in
-its own worktree. Maggie follows it: the source control panel shows that
-worktree's branch, changes and commits ahead of `main`, and an Auto tab counts
-what is left to commit and lands the worktree when it is clean.
+**Worktrees and source control.** A session started with `claude -w` or
+`codex --worktree` runs in its own worktree. Maggie follows it: the source
+control panel shows that worktree's branch, changes and commits ahead of
+`main`, and an Auto tab counts what is left to commit and lands the worktree
+when it is clean.
 
-**Usage.** A panel with the cost and tokens of every Claude Code session, by
-day, project and model, priced at current rates, with your plan's limits
-alongside. A custom range for the accountant.
+**Usage.** A panel with the cost and tokens of every Claude Code and Codex
+session, by day, project and model, priced at current rates, with your Claude
+plan's limits alongside. A custom range for the accountant.
 
 **Reply timing in the titlebar.** The time to first token and the tokens per
-second of the reply streaming in the current tab, live.
+second of the reply streaming in the current tab, live. Claude Code only.
 
 **Capture.** Turn it on, and the requests Claude Code sends to the model, system
-prompt and all, are saved per session, exactly as the API receives them.
+prompt and all, are saved per session, exactly as the API receives them. Claude
+Code only.
 
 **Keep the Mac awake** from the sidebar, lid closed included, while the flock
 works.
@@ -98,7 +104,8 @@ GitHub, and Maggie can check on its own if you let it.
 ### From source
 
 You need [Zig 0.16](https://ziglang.org/download/), Xcode 26 or newer and
-[Claude Code](https://claude.com/product/claude-code). Optionally
+[Claude Code](https://claude.com/product/claude-code) or
+[Codex](https://developers.openai.com/codex/cli). Optionally
 [SwiftLint](https://github.com/realm/SwiftLint), which the build runs if it is
 installed, and Python 3 with Pillow to regenerate the icon.
 
@@ -137,11 +144,13 @@ commits, grouped. The appcast is signed with the key pairing
 ## How it works
 
 Maggie finds the Claude Code running in each terminal from Claude Code's own
-session registry and reads the session's transcript. There are no hooks to
-install and nothing to add to your Claude Code settings.
+session registry and reads the session's transcript. It finds a Codex session
+from the rollout file (`~/.codex/sessions/…`) the `codex` process keeps open,
+and reads the turn's state, model and edits off the end of it. There are no
+hooks to install and nothing to add to either agent's settings.
 
-The usage panel is computed from those transcripts, and the plan limits from
-what `claude` itself reports.
+The usage panel is computed from those transcripts and rollouts, and the plan
+limits from what `claude` itself reports.
 
 For the reply timing, new terminals get `ANTHROPIC_BASE_URL` pointed at a local
 proxy that passes every request through to Anthropic untouched and watches the

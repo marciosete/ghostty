@@ -219,11 +219,11 @@ extension Ghostty {
         // by the user, this is set to the prior value (which may be empty, but non-nil).
         private var titleFromTerminal: String?
 
-        /// The Claude Code session this surface was restored with, and until when it is saved
-        /// again in place of the running one. Claude Code takes a moment to start and
+        /// The agent session this surface was restored with, and until when it is saved
+        /// again in place of the running one. An agent takes a moment to start and
         /// register, especially with many terminals resuming at once, and a save in between
         /// mustn't lose the session.
-        private var restoredClaudeCodeSession: (session: ClaudeCodeSession, until: Date)?
+        private var restoredAgentSession: (session: AgentSession, until: Date)?
 
         // The cached contents of the screen.
         private(set) var cachedScreenContents: CachedValue<String>
@@ -395,8 +395,8 @@ extension Ghostty {
             // its replies, behind the capture proxy while requests are captured.
             surface_cfg.environmentVariables.merge(SystemPromptCapture.shared.environment) { current, _ in current }
             ClaudeStreams.shared.addEnvironment(to: &surface_cfg)
-            // A new session starts Claude Code; a restored one resumes its own.
-            ClaudeCodeStart.shared.apply(to: &surface_cfg)
+            // A new session starts the chosen agent; a restored one resumes its own.
+            AgentStart.shared.apply(to: &surface_cfg)
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }
@@ -1880,15 +1880,21 @@ extension Ghostty {
             var title: String?
             var isUserSetTitle: Bool
 
-            /// The Claude Code session running in the surface, resumed when it opens again.
-            var claudeCodeSession: ClaudeCodeSession?
+            /// The agent session running in the surface, resumed when it opens again.
+            var agentSession: AgentSession?
 
             enum CodingKeys: String, CodingKey {
                 case pwd
                 case uuid
                 case title
                 case isUserSetTitle
+
+                /// A Claude Code session, the only kind saved before Codex was added. Kept
+                /// as its own key so a workspace saved then opens with its sessions.
                 case claudeCodeSession
+
+                /// A session of any other agent.
+                case agentSession
             }
 
             init(
@@ -1896,13 +1902,13 @@ extension Ghostty {
                 uuid: UUID?,
                 title: String?,
                 isUserSetTitle: Bool,
-                claudeCodeSession: ClaudeCodeSession?
+                agentSession: AgentSession?
             ) {
                 self.pwd = pwd
                 self.uuid = uuid
                 self.title = title
                 self.isUserSetTitle = isUserSetTitle
-                self.claudeCodeSession = claudeCodeSession
+                self.agentSession = agentSession
             }
 
             init(from decoder: Decoder) throws {
@@ -1912,7 +1918,11 @@ extension Ghostty {
                 title = try container.decodeIfPresent(String.self, forKey: .title)
                 isUserSetTitle = try container.decodeIfPresent(Bool.self, forKey: .isUserSetTitle) ?? false
                 // A session that can't be read is left out rather than failing the restore.
-                claudeCodeSession = try? container.decodeIfPresent(ClaudeCodeSession.self, forKey: .claudeCodeSession)
+                if let claude = try? container.decodeIfPresent(ClaudeCodeSession.self, forKey: .claudeCodeSession) {
+                    agentSession = .claude(claude)
+                } else {
+                    agentSession = try? container.decodeIfPresent(AgentSession.self, forKey: .agentSession)
+                }
             }
 
             func encode(to encoder: Encoder) throws {
@@ -1921,17 +1931,21 @@ extension Ghostty {
                 try container.encodeIfPresent(uuid?.uuidString, forKey: .uuid)
                 try container.encodeIfPresent(title, forKey: .title)
                 try container.encode(isUserSetTitle, forKey: .isUserSetTitle)
-                try container.encodeIfPresent(claudeCodeSession, forKey: .claudeCodeSession)
+                switch agentSession {
+                case .claude(let session): try container.encode(session, forKey: .claudeCodeSession)
+                case .codex: try container.encode(agentSession, forKey: .agentSession)
+                case nil: break
+                }
             }
 
-            /// The configuration that opens the surface again. A Claude Code session is resumed
-            /// in the directory it was started in, where Claude Code looks for it.
+            /// The configuration that opens the surface again. An agent session is resumed in
+            /// the directory it was started in, where the agent looks for it.
             var surfaceConfiguration: SurfaceConfiguration {
                 var config = SurfaceConfiguration()
-                if let claudeCodeSession {
-                    config.workingDirectory = claudeCodeSession.cwd
-                    config.initialInput = claudeCodeSession.resumeInput
-                    config.environmentVariables = claudeCodeSession.resumeEnvironment
+                if let agentSession {
+                    config.workingDirectory = agentSession.cwd
+                    config.initialInput = agentSession.resumeInput
+                    config.environmentVariables = agentSession.resumeEnvironment
                 } else {
                     config.workingDirectory = pwd
                 }
@@ -1959,8 +1973,8 @@ extension Ghostty {
                 }
             }
 
-            if let session = state.claudeCodeSession {
-                restoredClaudeCodeSession = (session, Date().addingTimeInterval(60))
+            if let session = state.agentSession {
+                restoredAgentSession = (session, Date().addingTimeInterval(60))
             }
         }
 
@@ -1970,21 +1984,21 @@ extension Ghostty {
                 uuid: id,
                 title: title,
                 isUserSetTitle: titleFromTerminal != nil,
-                claudeCodeSession: claudeCodeSessionToSave()
+                agentSession: agentSessionToSave()
             ).encode(to: encoder)
         }
 
-        /// The Claude Code session to resume when the surface opens again. Claude Code leads
-        /// its own process group and stays in the foreground while it works.
-        private func claudeCodeSessionToSave() -> ClaudeCodeSession? {
+        /// The agent session to resume when the surface opens again. An agent leads its
+        /// own process group and stays in the foreground while it works.
+        private func agentSessionToSave() -> AgentSession? {
             if let pid = surfaceModel?.foregroundPID,
-               let session = ClaudeCodeSession.running(pid: pid) {
-                restoredClaudeCodeSession = nil
+               let session = AgentSession.running(pid: pid) {
+                restoredAgentSession = nil
                 return session
             }
 
-            guard let restored = restoredClaudeCodeSession, restored.until > Date() else {
-                restoredClaudeCodeSession = nil
+            guard let restored = restoredAgentSession, restored.until > Date() else {
+                restoredAgentSession = nil
                 return nil
             }
             return restored.session

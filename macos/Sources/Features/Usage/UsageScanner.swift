@@ -128,6 +128,9 @@ final class UsageScanner {
             sources.append(Source(provider: .claude, directory: home.appendingPathComponent(".claude/projects"), fileName: nil))
         }
 
+        let codexHome = configured("CODEX_HOME") ?? home.appendingPathComponent(".codex")
+        sources.append(Source(provider: .codex, directory: codexHome + "/sessions", fileName: nil))
+
         let grokHome = configured("GROK_HOME") ?? home.appendingPathComponent(".grok")
         sources.append(Source(provider: .grok, directory: grokHome + "/sessions", fileName: "updates.jsonl"))
 

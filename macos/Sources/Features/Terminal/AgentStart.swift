@@ -1,40 +1,50 @@
 import AppKit
+import Combine
 import Foundation
 
-/// Starts Claude Code in every new terminal, so a new session is a Claude Code session
-/// without a shell startup file arranging it. The command is typed into the shell once
-/// it is up, the way a restored session's `claude --resume` is, so `/exit` drops back
-/// to the shell and the terminal stays.
+/// Starts the chosen coding agent, Claude Code or Codex, in every new terminal, so a new
+/// session is an agent session without a shell startup file arranging it. The command is
+/// typed into the shell once it is up, the way a restored session's resume command is, so
+/// `/exit` drops back to the shell and the terminal stays.
 ///
-/// In a git repository each session gets its own worktree, `claude -w`, so what it
-/// changes is its own and the sidebar can show and land it. A session opened from a
-/// worktree starts from the main checkout, so two sessions never share one. `claude -w`
-/// refuses a folder whose trust dialog hasn't been accepted, and a plain `claude`,
-/// which asks, follows it then.
+/// In a git repository each session gets its own worktree (`claude -w`, `codex
+/// --worktree`), so what it changes is its own and the sidebar can show and land it. A
+/// session opened from a worktree starts from the main checkout, so two sessions never
+/// share one. `claude -w` refuses a folder whose trust dialog hasn't been accepted, and a
+/// plain start, which asks, follows it then.
 ///
-/// The terminal's environment says it is one of these, so a shell startup file that
-/// starts Claude Code itself can stand down.
+/// The terminal's environment says it is one of these, and which agent, so a shell
+/// startup file that starts an agent itself can stand down.
 @MainActor
-final class ClaudeCodeStart {
-    static let shared = ClaudeCodeStart()
+final class AgentStart: ObservableObject {
+    static let shared = AgentStart()
 
-    /// Set in a terminal this starts Claude Code in.
+    /// Set to "1" in a terminal this starts an agent in, or that resumes one. The name
+    /// is from when Claude Code was the only agent; shell startup files check it.
     static let environmentVariable = "MAGGIE_CLAUDE_CODE_START"
+
+    /// Set to the agent's name, `claude` or `codex`, next to `environmentVariable`.
+    static let agentEnvironmentVariable = "MAGGIE_AGENT"
 
     private static let enabledKey = "ClaudeCodeStartsInNewSessions"
 
     private weak var menuItem: NSMenuItem?
 
-    var isEnabled: Bool {
+    @Published var isEnabled: Bool {
         didSet {
             UserDefaults.ghostty.set(isEnabled, forKey: Self.enabledKey)
-            menuItem?.state = isEnabled ? .on : .off
+            updateMenuItem()
         }
     }
 
+    /// The agent started, from Settings.
+    var agent: CodingAgent {
+        CodingAgentSettings.shared.agent
+    }
+
     private init() {
-        // On for Maggie, whose sessions are Claude Code sessions; off for a build that
-        // isn't, which keeps Ghostty's terminals plain.
+        // On for Maggie, whose sessions are agent sessions; off for a build that isn't,
+        // which keeps Ghostty's terminals plain.
         isEnabled = UserDefaults.ghostty.object(forKey: Self.enabledKey) as? Bool ?? Maggie.isMaggie
     }
 
@@ -44,18 +54,21 @@ final class ClaudeCodeStart {
     /// (a restored session resuming) or this is off.
     func apply(to config: inout Ghostty.SurfaceConfiguration) {
         guard isEnabled, config.initialInput == nil else { return }
-        config.initialInput = Self.command(in: config.workingDirectory) + "\n"
+        let agent = agent
+        config.initialInput = Self.command(for: agent, in: config.workingDirectory) + "\n"
         config.environmentVariables[Self.environmentVariable] = "1"
+        config.environmentVariables[Self.agentEnvironmentVariable] = agent.rawValue
     }
 
-    /// The command for a terminal starting in `directory` (the shell's default when nil).
-    nonisolated static func command(in directory: String?) -> String {
-        guard let directory, let main = mainCheckout(of: directory) else { return "claude" }
+    /// The command for a terminal starting `agent` in `directory` (the shell's default
+    /// when nil).
+    nonisolated static func command(for agent: CodingAgent, in directory: String?) -> String {
+        guard let directory, let main = mainCheckout(of: directory) else { return agent.command }
         let here = URL(fileURLWithPath: directory).standardizedFileURL.path
         if URL(fileURLWithPath: main).standardizedFileURL.path == here {
-            return "claude -w || claude"
+            return "\(agent.worktreeCommand) || \(agent.command)"
         }
-        return "(cd '\(main)' && claude -w) || claude"
+        return "(cd '\(main)' && \(agent.worktreeCommand)) || \(agent.command)"
     }
 
     /// The main checkout of the repository `directory` is in: the worktree the others
@@ -96,12 +109,19 @@ final class ClaudeCodeStart {
     // MARK: Menu
 
     func installMenuItem(in menu: NSMenu, at index: Int) {
-        let item = NSMenuItem(title: "Start Claude Code in New Sessions", action: #selector(toggle(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: "", action: #selector(toggle(_:)), keyEquivalent: "")
         item.target = self
-        item.state = isEnabled ? .on : .off
         item.setImageIfDesired(systemSymbolName: "sparkles")
         menu.insertItem(item, at: index)
         menuItem = item
+        updateMenuItem()
+    }
+
+    /// The menu item names the agent Settings chose, so it is called again when that
+    /// changes.
+    func updateMenuItem() {
+        menuItem?.title = "Start \(agent.displayName) in New Sessions"
+        menuItem?.state = isEnabled ? .on : .off
     }
 
     @objc private func toggle(_ sender: Any?) {

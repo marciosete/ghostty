@@ -3,7 +3,7 @@ import Testing
 @testable import Ghostty
 
 @Suite
-struct ClaudeCodeStartTests {
+struct AgentStartTests {
     /// A repository with a worktree, in a temporary directory removed after `body`.
     private func withRepository(_ body: (_ main: String, _ worktree: String) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory
@@ -32,25 +32,28 @@ struct ClaudeCodeStartTests {
         try #require(process.terminationStatus == 0)
     }
 
-    @Test func outsideARepositoryIsPlainClaude() {
-        #expect(ClaudeCodeStart.command(in: nil) == "claude")
-        #expect(ClaudeCodeStart.command(in: FileManager.default.temporaryDirectory.path) == "claude")
+    @Test func outsideARepositoryIsAPlainStart() {
+        #expect(AgentStart.command(for: .claude, in: nil) == "claude")
+        #expect(AgentStart.command(for: .codex, in: nil) == "codex")
+        #expect(AgentStart.command(for: .claude, in: FileManager.default.temporaryDirectory.path) == "claude")
     }
 
     @Test func inTheMainCheckoutItIsAWorktreeSession() throws {
         try withRepository { main, _ in
-            #expect(ClaudeCodeStart.command(in: main) == "claude -w || claude")
+            #expect(AgentStart.command(for: .claude, in: main) == "claude -w || claude")
+            #expect(AgentStart.command(for: .codex, in: main) == "codex --worktree || codex")
         }
     }
 
     @Test func inAWorktreeItStartsFromTheMainCheckout() throws {
         try withRepository { main, worktree in
             let real = URL(fileURLWithPath: main).standardizedFileURL.resolvingSymlinksInPath().path
-            let command = ClaudeCodeStart.command(in: worktree)
+            let command = AgentStart.command(for: .claude, in: worktree)
             #expect(command.hasPrefix("(cd '"))
             #expect(command.hasSuffix("' && claude -w) || claude"))
             #expect(command.contains(real) || command.contains(main))
-            #expect(ClaudeCodeStart.mainCheckout(of: worktree).map {
+            #expect(AgentStart.command(for: .codex, in: worktree).hasSuffix("' && codex --worktree) || codex"))
+            #expect(AgentStart.mainCheckout(of: worktree).map {
                 URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
             } == real)
         }
@@ -59,8 +62,8 @@ struct ClaudeCodeStartTests {
     @Test @MainActor func aRestoredSessionKeepsItsResumeInput() {
         var config = Ghostty.SurfaceConfiguration()
         config.initialInput = "claude --resume abc\n"
-        ClaudeCodeStart.shared.apply(to: &config)
+        AgentStart.shared.apply(to: &config)
         #expect(config.initialInput == "claude --resume abc\n")
-        #expect(config.environmentVariables[ClaudeCodeStart.environmentVariable] == nil)
+        #expect(config.environmentVariables[AgentStart.environmentVariable] == nil)
     }
 }

@@ -9,7 +9,18 @@ import Foundation
 enum UsageProvider: String, CaseIterable {
     // Declaration order is the reading order of every chart, row and table.
     case claude
+    case codex
     case grok
+}
+
+extension CodingAgent {
+    /// The usage provider whose transcripts the agent writes.
+    var usageProvider: UsageProvider {
+        switch self {
+        case .claude: return .claude
+        case .codex: return .codex
+        }
+    }
 }
 
 /// Token counts of one or more usage events.
@@ -109,6 +120,122 @@ enum UsageTranscripts {
                 reasoning: 0),
             reportedCostUsd: UsageJSON.number(record["costUSD"]),
             dedupeKey: dedupeKey)
+    }
+
+    // MARK: Codex
+
+    /// What a Codex rollout said so far that its later lines need: `token_count` events
+    /// carry no model, so the model is carried forward from the last `turn_context`,
+    /// and the session id from the `session_meta` the rollout opens with.
+    struct CodexScanState {
+        var model = ""
+        var sessionId = ""
+
+        /// The last usage event, to drop the copies Codex writes of it.
+        var lastUsageSignature: String?
+
+        var sawSessionMeta = false
+
+        /// While true, the leading usage events are re-stamped copies of the parent's
+        /// history, which the parent's own rollout already counted.
+        var suppressingForkCopies = false
+        var forkCopyAnchorMs = 0
+    }
+
+    /// A forked or subagent rollout opens with the parent's full history copied in, every
+    /// line re-stamped to the fork instant, in one burst. The child's first usage event of
+    /// its own only lands after a real model turn, seconds later. One second splits them.
+    private static let codexForkCopyMaxGapMs = 1000
+
+    /// Parses one line of a Codex rollout, updating `state` with what later lines need.
+    ///
+    /// Deltas come from `last_token_usage`. Summed across a session, they reconcile with
+    /// its final `total_token_usage`, provided consecutive duplicate events are dropped,
+    /// which this does.
+    static func parseCodexLine(_ line: Data, state: inout CodexScanState) -> UsageRecord? {
+        guard let record = UsageJSON.object(line),
+              let payload = record["payload"] as? [String: Any] else { return nil }
+
+        switch record["type"] as? String {
+        case "session_meta":
+            // Only the first meta is this rollout's own session. A forked rollout repeats
+            // its ancestors' metas right after it.
+            guard !state.sawSessionMeta else { return nil }
+            state.sawSessionMeta = true
+            if let id = (payload["id"] ?? payload["session_id"]) as? String {
+                state.sessionId = id
+            }
+            if let timestampMs = UsageTimestamp.milliseconds(record["timestamp"]), isForkedSessionMeta(payload) {
+                state.suppressingForkCopies = true
+                state.forkCopyAnchorMs = timestampMs
+            }
+            return nil
+
+        case "turn_context":
+            if let model = payload["model"] as? String, !model.isEmpty {
+                state.model = model
+            }
+            return nil
+
+        default:
+            break
+        }
+
+        guard payload["type"] as? String == "token_count",
+              let info = payload["info"] as? [String: Any],
+              let last = info["last_token_usage"] as? [String: Any],
+              let timestampMs = UsageTimestamp.milliseconds(record["timestamp"]),
+              // An event before its turn's context has no model yet. It mustn't take the
+              // duplicate signature either, or the copy Codex writes once the model is
+              // known would be skipped and the tokens never counted.
+              !state.model.isEmpty else { return nil }
+
+        // Codex writes an unchanged token_count again on some stream boundaries.
+        let signature = last.keys.sorted().map { "\($0)=\(UsageJSON.count(last[$0]))" }.joined(separator: ",")
+        guard signature != state.lastUsageSignature else { return nil }
+        state.lastUsageSignature = signature
+
+        if state.suppressingForkCopies {
+            if timestampMs - state.forkCopyAnchorMs < codexForkCopyMaxGapMs {
+                state.forkCopyAnchorMs = timestampMs
+                return nil
+            }
+            state.suppressingForkCopies = false
+        }
+
+        let input = UsageJSON.count(last["input_tokens"])
+        let cachedInput = UsageJSON.count(last["cached_input_tokens"])
+        let cacheCreation = UsageJSON.count(last["cache_write_input_tokens"])
+        let output = UsageJSON.count(last["output_tokens"])
+        let totals = UsageTokenTotals(
+            // Codex reports input_tokens including the cached part.
+            uncachedInput: max(0, input - cachedInput - cacheCreation),
+            cachedInput: cachedInput,
+            cacheCreation: cacheCreation,
+            output: output,
+            // Reported inside output_tokens, shown apart in the token mix.
+            reasoning: min(output, UsageJSON.count(last["reasoning_output_tokens"])))
+        guard totals.total > 0 else { return nil }
+
+        return UsageRecord(
+            provider: .codex,
+            timestampMs: timestampMs,
+            model: state.model,
+            sessionId: state.sessionId,
+            totals: totals,
+            // Codex doesn't report cost in the rollout.
+            reportedCostUsd: nil,
+            // Events that survive the fork-copy suppression are unique to this rollout.
+            dedupeKey: nil)
+    }
+
+    /// Whether a `session_meta` payload marks the rollout as a fork or a subagent.
+    private static func isForkedSessionMeta(_ payload: [String: Any]) -> Bool {
+        if payload["forked_from_id"] is String { return true }
+        guard let source = payload["source"] as? [String: Any],
+              let subagent = source["subagent"] as? [String: Any],
+              let spawn = subagent["thread_spawn"] as? [String: Any] else { return false }
+        return spawn["parent_thread_id"] is String
     }
 
     // MARK: Grok Build

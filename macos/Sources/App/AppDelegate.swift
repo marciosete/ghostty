@@ -238,6 +238,7 @@ class AppDelegate: NSObject,
 
         // Add the tab sidebar items to the View menu.
         installTabSidebarMenuItems()
+        installSettingsMenuItem()
 
         // Keep the open windows and tabs saved so they can be opened again.
         TerminalWorkspace.shared.start(ghostty)

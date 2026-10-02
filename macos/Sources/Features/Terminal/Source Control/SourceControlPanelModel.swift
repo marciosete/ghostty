@@ -138,7 +138,7 @@ final class SourceControlPanelModel: ObservableObject {
         let pid = MainActor.assumeIsolated { foregroundPID() }
         let directory = directory
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let target = pid.flatMap(ClaudeCodeSession.directory(ofRunning:)) ?? directory
+            let target = pid.flatMap(AgentSession.directory(ofRunning:)) ?? directory
             DispatchQueue.main.async {
                 guard let self, generation == self.lookupGeneration else { return }
                 guard let target else {

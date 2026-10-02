@@ -183,10 +183,10 @@ struct TabSidebarHoverCardView: View {
                 if let branch = info.branch {
                     row(info.isLinkedWorktree ? "square.stack.3d.up" : "arrow.triangle.branch", branch)
                 }
-                if let session = info.claudeSessions.first {
-                    row("sparkle", "Session \(session.id.uuidString.lowercased().prefix(8))")
+                if let session = info.sessions.first {
+                    row("sparkle", "\(session.agent.displayName) session \(session.id.uuidString.lowercased().prefix(8))")
                 }
-                if !info.claudeSessions.isEmpty {
+                if !info.sessions.isEmpty {
                     if let usage, !usage.isEmpty {
                         usageTable(usage)
                     } else {
@@ -261,7 +261,7 @@ struct TabSidebarHoverCardView: View {
     }
 
     private func loadUsage() {
-        guard let sessions = info?.claudeSessions, !sessions.isEmpty else { return }
+        guard let sessions = info?.sessions, !sessions.isEmpty else { return }
         ClaudeCodeSessionCost.usage(of: sessions) { read in
             usage = read
             usageRead = true
