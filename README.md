@@ -119,7 +119,9 @@ runs `fork/install.sh --build-only` while you keep working, then
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds every
 push to `main` into a universal `Maggie.app`, signs and notarizes it when the
 Apple secrets are set, and publishes a zip, a DMG and the Sparkle appcast as a
-GitHub release. The appcast is signed with the key pairing
+GitHub release. Versions are semver: `fork/VERSION` holds `MAJOR.MINOR`, and
+each push since it last changed counts one patch, so releases run `0.1.0`,
+`0.1.1`, … until the file is bumped. The appcast is signed with the key pairing
 `fork/sparkle-public.key`; the app accepts no update that isn't.
 
 ## How it works
