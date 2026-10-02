@@ -251,7 +251,7 @@ struct GitHookTests {
         #expect(run.current == 1)
     }
 
-    @Test @MainActor func aRunThatEndedGoesOnceHeadMovesOn() async throws {
+    @Test @MainActor func aPreCommitRunGoesOnceGitCommits() async throws {
         let root = try Self.huskyRepository(hook: "pre-commit", script: """
             echo "[1/1] One…"
             ./scripts/one.sh
@@ -265,14 +265,55 @@ struct GitHookTests {
         try await Self.wait { !tracker.scripts.isEmpty }
 
         let commit = try Self.commitThroughPipe(in: root)
-        try await Self.wait { tracker.runs["pre-commit"]?.outcome == .passed }
+        try await Self.wait { tracker.runs["pre-commit"] != nil }
+        commit.waitUntilExit()
+        try await Self.wait { tracker.runs["pre-commit"] == nil }
+    }
+
+    @Test @MainActor func aPrePushRunGoesOnceGitPushes() async throws {
+        let root = try Self.huskyRepository(prePush: """
+            echo "[1/1] One…"
+            sleep 1
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let remote = root.appendingPathComponent("remote.git")
+        try Self.git(["init", "-q", "--bare", remote.path], in: root)
+        try Self.git(["remote", "add", "origin", remote.path], in: root)
+        try Self.git(["commit", "-q", "--allow-empty", "-m", "first"], in: root)
+        let repository = try #require(Git.repository(containing: root))
+        let tracker = GitHookTracker.tracker(for: repository)
+        let watch = tracker.watch()
+        defer { watch.cancel() }
+        try await Self.wait { !tracker.scripts.isEmpty }
+
+        let push = try Self.throughPipe(["push", "-q", "-u", "origin", "HEAD"], in: root)
+        try await Self.wait { tracker.runs["pre-push"] != nil }
+        push.waitUntilExit()
+        try await Self.wait { tracker.runs["pre-push"] == nil }
+    }
+
+    @Test @MainActor func aRunThatFailedGoesOnceHeadMovesOn() async throws {
+        let root = try Self.huskyRepository(hook: "pre-commit", script: """
+            echo "[1/1] One…"
+            ./scripts/one.sh
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Self.write("#!/bin/sh\nsleep 1\nexit 1\n", to: root.appendingPathComponent("scripts/one.sh"))
+        let repository = try #require(Git.repository(containing: root))
+        let tracker = GitHookTracker.tracker(for: repository)
+        let watch = tracker.watch()
+        defer { watch.cancel() }
+        try await Self.wait { !tracker.scripts.isEmpty }
+
+        let commit = try Self.commitThroughPipe(in: root)
+        try await Self.wait { tracker.runs["pre-commit"]?.outcome == .failed }
         commit.waitUntilExit()
 
-        // The commit it made leaves it standing.
+        // Git made no commit, so it stands.
         try await Task.sleep(nanoseconds: 3_000_000_000)
-        #expect(tracker.runs["pre-commit"]?.outcome == .passed)
+        #expect(tracker.runs["pre-commit"]?.outcome == .failed)
 
-        // Another commit moves HEAD on.
+        // A commit that skips the hook moves HEAD on.
         try Self.git(["commit", "-q", "--allow-empty", "--no-verify", "-m", "next"], in: root)
         try await Self.wait { tracker.runs["pre-commit"] == nil }
     }
@@ -447,9 +488,14 @@ struct GitHookTests {
     private static func commitThroughPipe(in root: URL) throws -> Process {
         try "hello".write(to: root.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
         try git(["add", "file.txt"], in: root)
+        return try throughPipe(["commit", "-q", "-m", "test"], in: root)
+    }
+
+    /// Runs git with `arguments`, its output going through a pipe.
+    private static func throughPipe(_ arguments: [String], in root: URL) throws -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "'\(Git.executableURL!.path)' commit -q -m test 2>&1 | tail -5"]
+        process.arguments = ["-c", "'\(Git.executableURL!.path)' \(arguments.joined(separator: " ")) 2>&1 | tail -5"]
         process.currentDirectoryURL = root
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice

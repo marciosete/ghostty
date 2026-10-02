@@ -61,10 +61,10 @@ struct GitHookRun: Equatable {
 /// There is one tracker per repository, kept for the life of the app so the last run of
 /// each hook stays known. It only scans while a panel watches it.
 ///
-/// A run that ended is shown while it still speaks for the checkout: once git is done
-/// with it, having made the commit or the push, it goes as soon as HEAD moves, such as
-/// by a rebase, another commit, a reset or a switch of branch. It goes too when its
-/// script's steps change.
+/// A run that ended is shown until git is done with it. One that let git commit or push
+/// goes then, since the commit or the push says it passed. Any other stays while it
+/// still speaks for the checkout, until HEAD moves, such as by a rebase, a commit, a
+/// reset or a switch of branch. It goes too when its script's steps change.
 final class GitHookTracker: ObservableObject {
     let repository: Git.Repository
 
@@ -108,9 +108,11 @@ final class GitHookTracker: ObservableObject {
         /// The git command running the hook.
         let git: pid_t?
 
-        /// Without a file to read: what the git command changes once the hook passes, as
-        /// it was when the run was first seen, and the steps its commands reached.
+        /// What the git command changes once the hook passes, as it was when the run was
+        /// first seen.
         let stateBefore: String?
+
+        /// Without a file to read: the steps its commands reached.
         var reachedByCommands: [Int] = []
 
         var reached: [Int] { file == nil ? reachedByCommands : parser.reached }
@@ -212,8 +214,9 @@ final class GitHookTracker: ObservableObject {
         }
     }
 
-    /// The runs that ended and that HEAD has moved on from since git was done with them,
-    /// by hook, with the process that ran each. They're forgotten.
+    /// The runs that ended and that git has committed or pushed after, or that HEAD has
+    /// moved on from since git was done with them, by hook, with the process that ran
+    /// each. They're forgotten.
     private func staleRuns() -> [(hook: String, pid: pid_t)] {
         let ended = outputs.filter { $0.value.isFinished }
         guard !ended.isEmpty else { return [] }
@@ -223,7 +226,11 @@ final class GitHookTracker: ObservableObject {
         for (hook, var output) in ended {
             // The commit or the push isn't done until git is.
             if let git = output.git, RunningProcess.isRunning(git) { continue }
-            if !output.headKnown {
+            if output.git != nil, Git.state(changedBy: hook, in: repository) != output.stateBefore {
+                // Git made the commit or the push the hook stood guard for.
+                stale.append((hook, output.pid))
+                outputs[hook] = nil
+            } else if !output.headKnown {
                 output.headAfter = head
                 output.headKnown = true
                 outputs[hook] = output
@@ -271,7 +278,7 @@ final class GitHookTracker: ObservableObject {
                 file: file,
                 parser: GitHookOutputParser(script: script),
                 git: Self.git(running: running.pid),
-                stateBefore: file == nil ? Git.state(changedBy: script.name, in: repository) : nil)
+                stateBefore: Git.state(changedBy: script.name, in: repository))
         }
         guard var output = outputs[script.name], !output.isFinished else { return nil }
         defer { outputs[script.name] = output }
