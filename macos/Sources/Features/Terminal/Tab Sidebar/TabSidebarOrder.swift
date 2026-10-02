@@ -84,11 +84,78 @@ enum TabSidebarOrder {
         return nil
     }
 
+    /// What a block at `container` holds directly: a group holds tabs; a folder holds tabs
+    /// and groups; a folder group holds folders. `level` is a block level, or `depth` for
+    /// a tab.
+    static func canHold(container: Int, level: Int) -> Bool {
+        switch container {
+        case Level.group: return level > Level.group
+        case Level.folder: return level > Level.folder
+        case Level.folderGroup: return level == Level.folder
+        default: return false
+        }
+    }
+
+    /// Where something of `level` lands when dropped beside `target`, from the block at
+    /// `startLevel` out (`target` itself when `startLevel` is the depth): the items it moves
+    /// past, and the keys it takes. Beside a tab in a group, a tab joins the group; beside
+    /// a group, a tab goes in the group's folder, next to all of it. Beside a folder that is
+    /// in a folder group, a tab or a group can't stay in the folder group, so it goes next
+    /// to the whole folder group, in nothing. The anchor widens until its container can
+    /// hold what is dropped.
+    static func landing<Item: TabSidebarOrderItem>(
+        beside target: Item,
+        from startLevel: Int,
+        of level: Int,
+        among others: [Item]
+    ) -> (anchors: [Item], keys: [UUID?]) {
+        let depth = target.nestingKeys.count
+        var anchorLevel = startLevel
+        while true {
+            // The nearest block around the anchor; none means the top, which holds all.
+            guard let parent = (0..<anchorLevel).reversed().first(where: { target.nestingKeys[$0] != nil }),
+                  !canHold(container: parent, level: level) else { break }
+            anchorLevel = parent
+        }
+
+        let anchors: [Item]
+        if anchorLevel >= depth {
+            anchors = [target]
+        } else if let id = target.nestingKeys[anchorLevel] {
+            anchors = others.filter { $0.nestingKeys[anchorLevel] == id }
+        } else {
+            anchors = [target]
+        }
+
+        var keys = target.nestingKeys
+        for level in anchorLevel..<depth where level < depth {
+            keys[level] = nil
+        }
+        return (anchors, keys)
+    }
+
+    /// The keys something of `level` takes when dropped at `destination`: nil when there
+    /// is nothing there to take them from (the end, or a block with no tabs).
+    static func keys<Item: TabSidebarOrderItem>(
+        of level: Int,
+        droppedAt destination: Destination<Item>,
+        among others: [Item]
+    ) -> [UUID?]? {
+        switch destination {
+        case .item(let target):
+            return landing(beside: target, from: target.nestingKeys.count, of: level, among: others).keys
+        case .block(let target):
+            guard let first = others.first(where: { $0.nestingKeys[target.level] == target.id }) else { return nil }
+            return landing(beside: first, from: target.level, of: level, among: others).keys
+        case .end:
+            return nil
+        }
+    }
+
     /// `items` with the members of `block` moved to `destination`, keeping their order,
     /// or nil when the move makes no sense, such as next to one of its own members. The
-    /// block moves past whatever the target is in at the block's own level, or outside
-    /// it, since a folder doesn't go into a folder. The members keep their keys; the
-    /// caller changes those for a block that joined or left an outer one.
+    /// block moves past what `landing` says it does beside the target; the caller gives
+    /// its members the keys `landing` says they take.
     static func order<Item: TabSidebarOrderItem>(
         _ items: [Item],
         moving block: Block,
@@ -103,12 +170,12 @@ enum TabSidebarOrder {
         switch destination {
         case .item(let target):
             guard target.nestingKeys[block.level] != block.id else { return nil }
-            anchors = expand(target, among: others, from: block.level)
+            anchors = landing(beside: target, from: target.nestingKeys.count, of: block.level, among: others).anchors
 
         case .block(let target):
             guard target != block else { return nil }
             if let first = others.first(where: { $0.nestingKeys[target.level] == target.id }) {
-                anchors = expand(first, among: others, from: block.level)
+                anchors = landing(beside: first, from: target.level, of: block.level, among: others).anchors
             } else {
                 anchors = []
             }
@@ -131,12 +198,5 @@ enum TabSidebarOrder {
         var order = others
         order.insert(contentsOf: members, at: index)
         return order
-    }
-
-    /// Everything a block at `level` moves past when dropped next to `target`: the
-    /// outermost block `target` is in at that level or deeper, or `target` alone.
-    private static func expand<Item: TabSidebarOrderItem>(_ target: Item, among others: [Item], from level: Int) -> [Item] {
-        guard let block = block(of: target, from: level) else { return [target] }
-        return others.filter { $0.nestingKeys[block.level] == block.id }
     }
 }

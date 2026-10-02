@@ -125,10 +125,64 @@ struct TabSidebarOrderTests {
         #expect(names(order) == ["b", "a", "c"])
     }
 
-    @Test func groupDroppedOnAFolderGoesBeforeItsFirstTab() {
-        let items = [item("a", group: g1), item("b"), item("c", group: g2, folder: f1), item("d", group: g2, folder: f1)]
-        let order = TabSidebarOrder.order(items, moving: moving(Self.group, g1), to: .block(moving(Self.folder, f1)), after: false)
-        #expect(names(order) == ["b", "a", "c", "d"])
+    @Test func groupDroppedBesideAFolderGoesOutsideIt() {
+        let items = [item("a", group: g1), item("b"), item("c", group: g2, folder: f1), item("d", group: g2, folder: f1), item("e")]
+        let before = TabSidebarOrder.order(items, moving: moving(Self.group, g1), to: .block(moving(Self.folder, f1)), after: false)
+        #expect(names(before) == ["b", "a", "c", "d", "e"])
+        let after = TabSidebarOrder.order(items, moving: moving(Self.group, g1), to: .block(moving(Self.folder, f1)), after: true)
+        #expect(names(after) == ["b", "c", "d", "a", "e"])
+        // And takes no folder.
+        let others = items.filter { $0.nestingKeys[Self.group] != g1 }
+        #expect(TabSidebarOrder.keys(of: Self.group, droppedAt: .block(moving(Self.folder, f1)), among: others) == [nil, nil, nil])
+    }
+
+    @Test func groupDroppedBesideAFolderInAFolderGroupGoesOutsideTheGroupToo() {
+        let items = [
+            item("a", group: g1),
+            item("b", folder: f1, folderGroup: fg1),
+            item("c", folder: f2, folderGroup: fg1),
+        ]
+        // Folder groups hold only folders, so after f1 means after the whole folder group.
+        let order = TabSidebarOrder.order(items, moving: moving(Self.group, g1), to: .block(moving(Self.folder, f1)), after: true)
+        #expect(names(order) == ["b", "c", "a"])
+    }
+
+    // MARK: Landing
+
+    @Test func aTabBesideAGroupStaysInTheGroupsFolder() {
+        let items = [item("a", group: g1, folder: f1), item("b", group: g1, folder: f1), item("c", folder: f1)]
+        let landing = TabSidebarOrder.landing(beside: items[0], from: Self.group, of: 3, among: items)
+        #expect(names(landing.anchors) == ["a", "b"])
+        #expect(landing.keys == [nil, f1, nil])
+    }
+
+    @Test func aTabBesideATabJoinsItsGroupAndFolder() {
+        let items = [item("a", group: g1, folder: f1)]
+        let landing = TabSidebarOrder.landing(beside: items[0], from: 3, of: 3, among: items)
+        #expect(names(landing.anchors) == ["a"])
+        #expect(landing.keys == [nil, f1, g1])
+    }
+
+    @Test func aTabBesideAFolderInAFolderGroupLeavesBoth() {
+        let items = [item("a", folder: f1, folderGroup: fg1), item("b", folder: f2, folderGroup: fg1)]
+        let landing = TabSidebarOrder.landing(beside: items[0], from: Self.folder, of: 3, among: items)
+        #expect(names(landing.anchors) == ["a", "b"])
+        #expect(landing.keys == [nil, nil, nil])
+    }
+
+    @Test func aFolderBesideALooseTabInAFolderMovesPastTheFolder() {
+        // The tab is in no group, but it is in a folder, and a folder can't go in one.
+        let items = [item("a", folder: f1), item("b", group: g1, folder: f1), item("c")]
+        let landing = TabSidebarOrder.landing(beside: items[0], from: 3, of: Self.folder, among: items)
+        #expect(names(landing.anchors) == ["a", "b"])
+        #expect(landing.keys == [nil, nil, nil])
+    }
+
+    @Test func aFolderBesideAFolderInAFolderGroupJoinsTheGroup() {
+        let items = [item("a", folder: f1, folderGroup: fg1), item("b", folder: f2, folderGroup: fg1)]
+        let landing = TabSidebarOrder.landing(beside: items[0], from: Self.folder, of: Self.folder, among: items)
+        #expect(names(landing.anchors) == ["a"])
+        #expect(landing.keys == [fg1, nil, nil])
     }
 
     @Test func groupDroppedOnAnEmptyFolderGoesToTheEnd() {

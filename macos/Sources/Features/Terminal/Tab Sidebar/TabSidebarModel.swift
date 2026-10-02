@@ -1126,6 +1126,30 @@ final class TabSidebarModel: ObservableObject {
         move(window, to: index, groupID: nil, folderID: folderID)
     }
 
+    /// Drops a tab before or after a group, folder or folder group, outside it: beside a
+    /// group it stays in the group's folder; beside a folder it leaves the folder, and the
+    /// folder group too when there is one, since those hold only folders. Beside a block
+    /// with no tabs, such as an empty folder, is the end.
+    func drop(_ window: TerminalWindow, beside block: TabSidebarOrder.Block, after: Bool) {
+        let others = tabWindows.filter { $0 !== window }
+        let entries = others.map(Entry.init)
+        guard let first = entries.first(where: { $0.nestingKeys[block.level] == block.id }) else {
+            dropAtEnd(window)
+            return
+        }
+
+        let landing = TabSidebarOrder.landing(beside: first, from: block.level, of: Self.tabLevel, among: entries)
+        let anchor = after ? landing.anchors.last : landing.anchors.first
+        guard let anchor, let position = others.firstIndex(where: { $0 === anchor.window }) else {
+            dropAtEnd(window)
+            return
+        }
+        move(window,
+             to: after ? position + 1 : position,
+             groupID: landing.keys[TabSidebarOrder.Level.group],
+             folderID: landing.keys[TabSidebarOrder.Level.folder])
+    }
+
     /// Drops a tab below the last tab, moving it to the end outside any group or folder.
     func dropAtEnd(_ window: TerminalWindow) {
         let others = tabWindows.filter { $0 !== window }
@@ -1161,6 +1185,9 @@ final class TabSidebarModel: ObservableObject {
         apply(order: nestedOrder(order), select: window)
     }
 
+    /// A tab, as a level below every block.
+    private static let tabLevel = 3
+
     /// Where a dragged group, folder or folder group is dropped.
     enum BlockDestination {
         /// Next to a tab, or next to whatever it is in.
@@ -1179,66 +1206,49 @@ final class TabSidebarModel: ObservableObject {
         case end
     }
 
-    /// Moves every tab of a group together, before or after `destination`. The tabs
-    /// keep their order and their group, and take the folder of what they land next to.
+    /// Moves every tab of a group together, before or after `destination`, outside
+    /// whatever that is. The tabs keep their order and their group, and take the folder
+    /// of where they land (see `TabSidebarOrder.landing`).
     func moveGroup(_ groupID: UUID, to destination: BlockDestination, after: Bool) {
         guard let hostWindow, let tabGroup = hostWindow.tabGroup else { return }
         let block = TabSidebarOrder.Block.group(groupID)
-        guard let order = Self.order(tabGroup.windows, moving: block, to: destination, after: after) else { return }
+        guard let moved = Self.order(tabGroup.windows, moving: block, to: destination, after: after) else { return }
 
-        let folderID: UUID?
-        switch destination {
-        case .tab(let target): folderID = target.userTabFolderID
-        case .group(let targetID): folderID = folder(ofGroup: targetID)
-        case .folder(let targetID): folderID = targetID
-        case .folderGroup, .end: folderID = nil
-        }
+        let folderID = moved.keys?[TabSidebarOrder.Level.folder]
         for window in members(of: groupID) {
             window.userTabFolderID = folderID
         }
         if let folderID {
             UserTabFolderStore.shared.update(folderID) { $0.isCollapsed = false }
         }
-        apply(order: nestedOrder(order), select: nil)
+        apply(order: nestedOrder(moved.order), select: nil)
     }
 
     /// Drops a group onto a folder header, adding it to the start of that folder.
     func drop(group groupID: UUID, ontoFolder folderID: UUID) {
-        for window in members(of: groupID) {
-            window.userTabFolderID = folderID
-        }
-        UserTabFolderStore.shared.update(folderID) { $0.isCollapsed = false }
-
         // Before the folder's first other tab, or at the end when it has none.
-        guard let tabGroup = hostWindow?.tabGroup,
-              let order = Self.order(
-                tabGroup.windows,
-                moving: .group(groupID),
-                to: .folder(folderID),
-                after: false) else {
+        if let first = members(ofFolder: folderID).first(where: { $0.userTabGroupID != groupID }) {
+            moveGroup(groupID, to: .tab(first), after: false)
+        } else {
+            moveGroup(groupID, to: .end, after: false)
+            for window in members(of: groupID) {
+                window.userTabFolderID = folderID
+            }
+            UserTabFolderStore.shared.update(folderID) { $0.isCollapsed = false }
             normalizeOrder()
-            return
         }
-        apply(order: nestedOrder(order), select: nil)
     }
 
-    /// Moves every tab of a folder together, before or after `destination`. The tabs
-    /// keep their order, their groups and their folder, and the folder takes the folder
-    /// group of what it lands next to.
+    /// Moves every tab of a folder together, before or after `destination`, outside
+    /// whatever that is. The tabs keep their order, their groups and their folder, and the
+    /// folder takes the folder group of where it lands.
     func moveFolder(_ folderID: UUID, to destination: BlockDestination, after: Bool) {
         guard let hostWindow, let tabGroup = hostWindow.tabGroup else { return }
         let block = TabSidebarOrder.Block.folder(folderID)
-        guard let order = Self.order(tabGroup.windows, moving: block, to: destination, after: after) else { return }
+        guard let moved = Self.order(tabGroup.windows, moving: block, to: destination, after: after) else { return }
 
         let store = UserTabFolderStore.shared
-        let groupID: UUID?
-        switch destination {
-        case .tab(let target): groupID = store[target.userTabFolderID]?.groupID
-        case .group(let targetID): groupID = store[folder(ofGroup: targetID)]?.groupID
-        case .folder(let targetID): groupID = store[targetID]?.groupID
-        case .folderGroup(let targetID): groupID = targetID
-        case .end: groupID = nil
-        }
+        let groupID = moved.keys?[TabSidebarOrder.Level.folderGroup]
         let oldGroupID = store[folderID]?.groupID
         store.update(folderID) { $0.groupID = groupID }
         if let groupID {
@@ -1247,12 +1257,19 @@ final class TabSidebarModel: ObservableObject {
         if let oldGroupID, oldGroupID != groupID {
             removeFolderGroupIfEmpty(oldGroupID)
         }
-        apply(order: nestedOrder(order), select: nil)
+        apply(order: nestedOrder(moved.order), select: nil)
     }
 
     /// Drops a folder onto a folder group header, adding it to the start of that group.
     func drop(folder folderID: UUID, ontoFolderGroup groupID: UUID) {
-        moveFolder(folderID, to: .folderGroup(groupID), after: false)
+        // Before the group's first other folder, or just into the group when none shows.
+        let store = UserTabFolderStore.shared
+        if let first = tabWindows.first(where: { store[$0.userTabFolderID]?.groupID == groupID && $0.userTabFolderID != folderID }),
+           let firstFolder = first.userTabFolderID {
+            moveFolder(folderID, to: .folder(firstFolder), after: false)
+        } else {
+            add(folder: folderID, toFolderGroup: groupID)
+        }
     }
 
     /// Moves every tab of a folder group together, before or after `destination`. The
@@ -1260,18 +1277,19 @@ final class TabSidebarModel: ObservableObject {
     func moveFolderGroup(_ groupID: UUID, to destination: BlockDestination, after: Bool) {
         guard let hostWindow, let tabGroup = hostWindow.tabGroup else { return }
         let block = TabSidebarOrder.Block.folderGroup(groupID)
-        guard let order = Self.order(tabGroup.windows, moving: block, to: destination, after: after) else { return }
-        apply(order: nestedOrder(order), select: nil)
+        guard let moved = Self.order(tabGroup.windows, moving: block, to: destination, after: after) else { return }
+        apply(order: nestedOrder(moved.order), select: nil)
     }
 
-    /// `windows` with the tabs of a block moved to `destination`, or nil when the move
-    /// makes no sense, such as next to one of its own tabs.
+    /// `windows` with the tabs of a block moved to `destination`, and the keys the block
+    /// takes there (nil at the end), or nil when the move makes no sense, such as next to
+    /// one of its own tabs.
     static func order(
         _ windows: [NSWindow],
         moving block: TabSidebarOrder.Block,
         to destination: BlockDestination,
         after: Bool
-    ) -> [NSWindow]? {
+    ) -> (order: [NSWindow], keys: [UUID?]?)? {
         let entries = windows.map(Entry.init)
         let target: TabSidebarOrder.Destination<Entry>
         switch destination {
@@ -1281,7 +1299,9 @@ final class TabSidebarModel: ObservableObject {
         case .folderGroup(let id): target = .block(.folderGroup(id))
         case .end: target = .end
         }
-        return TabSidebarOrder.order(entries, moving: block, to: target, after: after)?.map(\.window)
+        guard let order = TabSidebarOrder.order(entries, moving: block, to: target, after: after) else { return nil }
+        let others = entries.filter { $0.nestingKeys[block.level] != block.id }
+        return (order.map(\.window), TabSidebarOrder.keys(of: block.level, droppedAt: target, among: others))
     }
 
     /// Makes sure the members of every folder group, folder and group are next to each

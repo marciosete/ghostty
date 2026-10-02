@@ -395,13 +395,13 @@ private struct TabSidebarFolderGroupHeader: View {
         }
         .overlay {
             // A folder dropped on the group joins it.
-            if placement != nil && !TabSidebarDragState.shared.isDraggingFolderGroup {
+            if placement == .into {
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(Color.accentColor, lineWidth: 2)
             }
         }
         .overlay(alignment: placement == .after ? .bottom : .top) {
-            if placement != nil && TabSidebarDragState.shared.isDraggingFolderGroup {
+            if placement == .before || placement == .after {
                 TabSidebarDropIndicator()
             }
         }
@@ -571,13 +571,13 @@ private struct TabSidebarFolderHeader: View {
         .overlay {
             // A tab or group dropped on the folder joins it; a folder or folder group
             // goes next to it.
-            if placement != nil && !TabSidebarDragState.shared.isDraggingFolderOrGroupOfThem {
+            if placement == .into {
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(Color.accentColor, lineWidth: 2)
             }
         }
         .overlay(alignment: placement == .after ? .bottom : .top) {
-            if placement != nil && TabSidebarDragState.shared.isDraggingFolderOrGroupOfThem {
+            if placement == .before || placement == .after {
                 TabSidebarDropIndicator()
             }
         }
@@ -740,13 +740,13 @@ private struct TabSidebarGroupHeader: View {
         }
         .overlay {
             // A tab dropped on the group joins it; a group or folder goes next to it.
-            if placement != nil && !TabSidebarDragState.shared.isDraggingBlock {
+            if placement == .into {
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(Color.accentColor, lineWidth: 2)
             }
         }
         .overlay(alignment: placement == .after ? .bottom : .top) {
-            if placement != nil && TabSidebarDragState.shared.isDraggingBlock {
+            if placement == .before || placement == .after {
                 TabSidebarDropIndicator()
             }
         }
@@ -1461,9 +1461,13 @@ struct SidePanelCloseButton: View {
 
 // MARK: - Drag and Drop
 
+/// Where a drop lands relative to the row under the pointer: before it, after it, or, for
+/// a header, inside what it heads. A header is three zones top to bottom: between, over,
+/// between.
 enum TabSidebarDropPlacement {
     case before
     case after
+    case into
 }
 
 /// Tracks the tab being dragged. The drag pasteboard only carries a token; the window
@@ -1594,8 +1598,6 @@ private struct TabSidebarDropDelegate: DropDelegate {
         let drag = TabSidebarDragState.shared
         guard drag.isDragging, info.hasItemsConforming(to: [.plainText]) else { return false }
 
-        // Only folders go in a folder group, so nothing else lands on its header.
-        if case .folderGroup = target { return drag.isDraggingFolderOrGroupOfThem }
         return true
     }
 
@@ -1635,11 +1637,19 @@ private struct TabSidebarDropDelegate: DropDelegate {
                     guard let targetWindow else { return }
                     model.drop(window, relativeTo: targetWindow, after: after)
                 case (.tab(let window), .group(let groupID)):
-                    model.drop(window, ontoGroup: groupID)
+                    if finalPlacement == .into {
+                        model.drop(window, ontoGroup: groupID)
+                    } else {
+                        model.drop(window, beside: .group(groupID), after: after)
+                    }
                 case (.tab(let window), .folder(let folderID)):
-                    model.drop(window, ontoFolder: folderID)
-                case (.tab, .folderGroup):
-                    return
+                    if finalPlacement == .into {
+                        model.drop(window, ontoFolder: folderID)
+                    } else {
+                        model.drop(window, beside: .folder(folderID), after: after)
+                    }
+                case (.tab(let window), .folderGroup(let groupID)):
+                    model.drop(window, beside: .folderGroup(groupID), after: after)
                 case (.tab(let window), .end):
                     model.dropAtEnd(window)
 
@@ -1649,9 +1659,13 @@ private struct TabSidebarDropDelegate: DropDelegate {
                 case (.group(let groupID), .group(let targetID)):
                     model.moveGroup(groupID, to: .group(targetID), after: after)
                 case (.group(let groupID), .folder(let folderID)):
-                    model.drop(group: groupID, ontoFolder: folderID)
-                case (.group, .folderGroup):
-                    return
+                    if finalPlacement == .into {
+                        model.drop(group: groupID, ontoFolder: folderID)
+                    } else {
+                        model.moveGroup(groupID, to: .folder(folderID), after: after)
+                    }
+                case (.group(let groupID), .folderGroup(let targetID)):
+                    model.moveGroup(groupID, to: .folderGroup(targetID), after: after)
                 case (.group(let groupID), .end):
                     model.moveGroup(groupID, to: .end, after: false)
 
@@ -1663,7 +1677,11 @@ private struct TabSidebarDropDelegate: DropDelegate {
                 case (.folder(let folderID), .folder(let targetID)):
                     model.moveFolder(folderID, to: .folder(targetID), after: after)
                 case (.folder(let folderID), .folderGroup(let groupID)):
-                    model.drop(folder: folderID, ontoFolderGroup: groupID)
+                    if finalPlacement == .into {
+                        model.drop(folder: folderID, ontoFolderGroup: groupID)
+                    } else {
+                        model.moveFolder(folderID, to: .folderGroup(groupID), after: after)
+                    }
                 case (.folder(let folderID), .end):
                     model.moveFolder(folderID, to: .end, after: false)
 
@@ -1705,21 +1723,30 @@ private struct TabSidebarDropDelegate: DropDelegate {
         case .tab:
             return info.location.y < height / 2 ? .before : .after
         case .group:
-            // A tab dropped on a group joins it; a group or folder goes above or below it.
-            guard drag.isDraggingBlock else { return .before }
-            return info.location.y < height / 2 ? .before : .after
+            // A tab can go in a group; a group, folder or folder group goes beside it.
+            return zone(info, canEnter: !drag.isDraggingBlock)
         case .folder:
-            // A tab or group dropped on a folder joins it; a folder or folder group goes
-            // above or below it.
-            guard drag.isDraggingFolderOrGroupOfThem else { return .before }
-            return info.location.y < height / 2 ? .before : .after
+            // A tab or group can go in a folder; a folder or folder group goes beside it.
+            return zone(info, canEnter: !drag.isDraggingFolderOrGroupOfThem)
         case .folderGroup:
-            // A folder dropped on a folder group joins it; a folder group goes above or
-            // below it.
-            guard drag.isDraggingFolderGroup else { return .before }
-            return info.location.y < height / 2 ? .before : .after
+            // Only a folder can go in a folder group.
+            return zone(info, canEnter: drag.isDraggingFolderOrGroupOfThem && !drag.isDraggingFolderGroup)
         case .end:
             return .before
         }
+    }
+
+    /// How far from a header's top or bottom edge a drop still means beside it rather
+    /// than into it.
+    private static let edge: CGFloat = 7
+
+    /// A header's zones: between above, over, between below. Without entering, the two
+    /// halves are before and after.
+    private func zone(_ info: DropInfo, canEnter: Bool) -> TabSidebarDropPlacement {
+        let y = info.location.y
+        guard canEnter else { return y < height / 2 ? .before : .after }
+        if y < Self.edge { return .before }
+        if y > height - Self.edge { return .after }
+        return .into
     }
 }
