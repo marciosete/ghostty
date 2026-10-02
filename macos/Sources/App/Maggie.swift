@@ -30,18 +30,19 @@ enum Maggie {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Maggie"
     }
 
-    /// What stands in for a title the terminal hasn't set: Ghostty's ghost, or for
-    /// Maggie a magpie, as near as emoji come to one (the black bird).
+    /// What stands in for a title the terminal hasn't set: Ghostty's ghost, or Maggie's
+    /// name. Where a view can draw, the sidebar shows the magpie (`MaggieGlyph`) instead.
     static var placeholderTitle: String {
-        isMaggie ? "🐦‍⬛" : "👻"
+        isMaggie ? appName : "👻"
     }
 
     /// `text` with Ghostty's name replaced by this app's, when this app is Maggie.
-    /// Ghostty's ghost goes with it: "👻 Ghostty" is "🐦‍⬛ Maggie".
+    /// Ghostty's ghost goes with it: "👻 Ghostty" is "Maggie".
     static func branded(_ text: String) -> String {
         guard isMaggie else { return text }
         return text
-            .replacingOccurrences(of: "👻", with: placeholderTitle)
+            .replacingOccurrences(of: "👻 Ghostty", with: appName)
+            .replacingOccurrences(of: "👻", with: appName)
             .replacingOccurrences(of: "Ghostty", with: appName)
     }
 

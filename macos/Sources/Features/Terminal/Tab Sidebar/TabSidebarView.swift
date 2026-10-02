@@ -952,10 +952,20 @@ private struct TabSidebarTabRow: View {
                     TabSidebarUnseenDot()
                 }
 
-                Text(tab.title)
-                    .fontWeight(finishedUnseen ? .semibold : nil)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if Maggie.isMaggie && tab.title == Maggie.placeholderTitle {
+                    // A session the terminal hasn't named yet wears the magpie, as tall
+                    // as the row allows: its spread wings need the room to read.
+                    Image("MaggieGlyph")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: isExtended ? 30 : 22)
+                        .accessibilityLabel(Maggie.appName)
+                } else {
+                    Text(tab.title)
+                        .fontWeight(finishedUnseen ? .semibold : nil)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
 
             Spacer(minLength: 0)

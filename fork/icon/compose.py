@@ -83,4 +83,26 @@ for name, px in [
 ]:
     photo.resize((px, px), Image.LANCZOS).save(IMAGESET / name)
 
+# The glyph: the swooping magpie (magpie-emblem.png), for the sidebar row of a
+# session that has no title yet. 32pt tall at 1x, 2x and 3x, on transparency;
+# rows draw it at 22pt, extended rows at 30pt.
+GLYPH = ROOT / "macos/Assets.xcassets/MaggieGlyph.imageset"
+GLYPH.mkdir(parents=True, exist_ok=True)
+emblem = Image.open(HERE / "magpie-emblem.png").convert("RGBA")
+emblem = emblem.crop(emblem.getbbox())
+for scale in (1, 2, 3):
+    height = 32 * scale
+    width = round(emblem.width * height / emblem.height)
+    suffix = "" if scale == 1 else f"@{scale}x"
+    emblem.resize((width, height), Image.LANCZOS).save(GLYPH / f"MaggieGlyph{suffix}.png")
+(GLYPH / "Contents.json").write_text(
+    '{\n  "images" : [\n'
+    + ",\n".join(
+        f'    {{\n      "filename" : "MaggieGlyph{"" if s == 1 else f"@{s}x"}.png",\n'
+        f'      "idiom" : "universal",\n      "scale" : "{s}x"\n    }}'
+        for s in (1, 2, 3)
+    )
+    + '\n  ],\n  "info" : {\n    "author" : "xcode",\n    "version" : 1\n  }\n}\n'
+)
+
 print("wrote Maggie.iconset, Maggie.png, the Maggie.icon layer and the AppIconImage imageset")
