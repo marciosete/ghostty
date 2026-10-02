@@ -78,8 +78,9 @@ jobs:
       COMMIT: ${{ needs.version.outputs.commit }}
       TAG: v${{ needs.version.outputs.version }}
       # Which optional secrets are set; a step's `if` can't read secrets directly.
-      HAS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
-      HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
+      # Each step needs its whole set, so a half-configured one is skipped, not failed.
+      HAS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.MACOS_CERTIFICATE_PWD != '' && secrets.MACOS_CERTIFICATE_NAME != '' }}
+      HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
       HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v5
@@ -127,7 +128,7 @@ jobs:
 
       - name: Sign
         env:
-          MACOS_CERTIFICATE_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+          MACOS_CERTIFICATE_NAME: ${{ env.HAS_CERTIFICATE == 'true' && secrets.MACOS_CERTIFICATE_NAME || '' }}
         run: |
           app=build/Maggie.app
           identity="${MACOS_CERTIFICATE_NAME:--}"
@@ -167,7 +168,7 @@ jobs:
 
       - name: Archive
         env:
-          MACOS_CERTIFICATE_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+          MACOS_CERTIFICATE_NAME: ${{ env.HAS_CERTIFICATE == 'true' && secrets.MACOS_CERTIFICATE_NAME || '' }}
         run: |
           mkdir -p dist dmg
           ditto -c -k --keepParent build/Maggie.app dist/Maggie-macos-universal.zip
