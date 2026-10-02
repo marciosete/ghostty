@@ -6256,16 +6256,19 @@ test "paste: unsafe text is refused unless allowed" {
     defer handler.deinit();
     handler.effects.write_pty = &S.writePty;
 
-    try testing.expectError(error.UnsafePaste, handler.paste(.{
-        .contents = .{ .memory = &.{.{ .mime = "text/plain", .data = "rm -rf /\n" }} },
-    }));
-    try testing.expectEqual(@as(usize, 0), S.write_count);
+    for ([_][]const u8{ "echo harmless\n", "echo harmless\r" }) |text| {
+        S.reset();
+        try testing.expectError(error.UnsafePaste, handler.paste(.{
+            .contents = .{ .memory = &.{.{ .mime = "text/plain", .data = text }} },
+        }));
+        try testing.expectEqual(@as(usize, 0), S.write_count);
 
-    try testing.expect(try handler.paste(.{
-        .contents = .{ .memory = &.{.{ .mime = "text/plain", .data = "rm -rf /\n" }} },
-        .allow_unsafe = true,
-    }));
-    try testing.expectEqualStrings("rm -rf /\r", S.written.items);
+        try testing.expect(try handler.paste(.{
+            .contents = .{ .memory = &.{.{ .mime = "text/plain", .data = text }} },
+            .allow_unsafe = true,
+        }));
+        try testing.expectEqualStrings("echo harmless\r", S.written.items);
+    }
 }
 
 test "paste: bracketed paste frames the text" {
@@ -6281,12 +6284,15 @@ test "paste: bracketed paste frames the text" {
     handler.effects.write_pty = &S.writePty;
     t.modes.set(.bracketed_paste, true);
 
-    // Newlines are safe inside the frame and are preserved.
-    try testing.expect(try handler.paste(.{
-        .contents = .{ .memory = &.{.{ .mime = "text/plain", .data = "hello\nworld" }} },
-    }));
-    try testing.expectEqualStrings("\x1b[200~hello\nworld\x1b[201~", S.written.items);
-    try testing.expectEqual(@as(usize, 1), S.write_count);
+    // Newlines and carriage returns are safe inside the frame and are preserved.
+    inline for (.{ "hello\nworld", "hello\rworld" }) |text| {
+        S.reset();
+        try testing.expect(try handler.paste(.{
+            .contents = .{ .memory = &.{.{ .mime = "text/plain", .data = text }} },
+        }));
+        try testing.expectEqualStrings("\x1b[200~" ++ text ++ "\x1b[201~", S.written.items);
+        try testing.expectEqual(@as(usize, 1), S.write_count);
+    }
 
     // The frame terminator is not.
     S.reset();
