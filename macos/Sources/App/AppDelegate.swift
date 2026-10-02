@@ -242,16 +242,17 @@ class AppDelegate: NSObject,
         // Keep the open windows and tabs saved so they can be opened again.
         TerminalWorkspace.shared.start(ghostty)
 
-        // Start our update checker. Builds installed under another bundle ID (such as a
-        // personal fork) must never update from the official feed, since that would
-        // replace them with the official release.
-        if Bundle.main.bundleIdentifier?.hasPrefix("com.mitchellh.ghostty") ?? false {
+        // Start our update checker. Ghostty and Maggie each update from their own feed
+        // (see UpdateDelegate); a build under any other bundle ID has no feed, since
+        // updating from either would replace it with that app.
+        if Maggie.isGhostty || Maggie.isMaggie {
             updateController.startUpdater()
         } else {
             menuCheckForUpdates?.isHidden = true
-            if let menu = menuCheckForUpdates?.menu {
-                MaggieUpdater.shared.installMenuItem(in: menu, after: menuCheckForUpdates)
-            }
+        }
+        // A Maggie installed from a checkout can also rebuild itself from there.
+        if let menu = menuCheckForUpdates?.menu {
+            MaggieUpdater.shared.installMenuItem(in: menu, after: menuCheckForUpdates)
         }
 
         // Register our service provider. This must happen after everything is initialized.

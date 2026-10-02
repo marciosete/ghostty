@@ -21,7 +21,7 @@
 #   --install-staged   install the staged app and open it. With --after, wait for that
 #                      process (the running Maggie) to quit first
 #
-# Maggie's "Update Maggie…" menu item runs --build-only, then quits and leaves
+# Maggie's "Update Maggie from Source…" menu item runs --build-only, then quits and leaves
 # --install-staged --after <its pid> to put the new version in its place.
 #
 # Override with APP_NAME, BUNDLE_ID, DEST or SIGN_IDENTITY, e.g. DEST=~/Applications.
@@ -102,29 +102,13 @@ build_and_stage() {
     WORK="$(mktemp -d)"
     trap 'rm -rf "$WORK"' EXIT
     local staging="$WORK/$APP_NAME.app"
-    ditto "$BUILT" "$staging"
 
-    echo "==> Renaming to $APP_NAME ($BUNDLE_ID)"
-    PLIST="$staging/Contents/Info.plist"
-    "$PLISTBUDDY" \
-        -c "Set :CFBundleIdentifier $BUNDLE_ID" \
-        -c "Set :CFBundleName $APP_NAME" \
-        -c "Set :CFBundleDisplayName $APP_NAME" \
-        "$PLIST"
-
-    # The checkout it was built from, which its "Update Maggie…" menu item builds.
-    "$PLISTBUDDY" -c "Delete :MaggieSourceRoot" "$PLIST" 2>/dev/null || true
-    "$PLISTBUDDY" -c "Add :MaggieSourceRoot string $ROOT" "$PLIST"
-
-    echo "==> Setting the Maggie icon"
-    # Built by fork/icon/compose.py: the photo at large sizes, the flat drawing at small
-    # ones. The build's own icon (images/Maggie.icon) is one layer, so it can't do that.
-    iconutil -c icns "$ROOT/fork/icon/Maggie.iconset" -o "$staging/Contents/Resources/Maggie.icns"
-
-    # CFBundleIconName points at the icon in the asset catalog and takes precedence
-    # over CFBundleIconFile, so remove it.
-    "$PLISTBUDDY" -c "Set :CFBundleIconFile Maggie" "$PLIST"
-    "$PLISTBUDDY" -c "Delete :CFBundleIconName" "$PLIST" 2>/dev/null || true
+    # A local build is version 0.1 build 1, so the feed's builds, numbered by commit
+    # count, always count as newer. The source root is the checkout "Update Maggie
+    # from Source…" builds.
+    APP_NAME="$APP_NAME" BUNDLE_ID="$BUNDLE_ID" "$ROOT/fork/package.sh" "$BUILT" "$staging" \
+        --commit "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+        --source-root "$ROOT"
 
     # macOS ties privacy answers to the signature. An ad hoc one changes with every
     # build, so it would ask again after each install. The identity from before the

@@ -27,7 +27,7 @@ final class MaggieUpdater: NSObject {
             .appendingPathComponent("Library/Logs/\(appName)/update.log")
     }
 
-    /// Adds "Update Maggie…" to `menu` after `item`, if the app knows its checkout.
+    /// Adds "Update Maggie from Source…" to `menu` after `item`, if the app knows its checkout.
     func installMenuItem(in menu: NSMenu, after item: NSMenuItem?) {
         guard Self.installScript != nil else { return }
 
@@ -42,13 +42,13 @@ final class MaggieUpdater: NSObject {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Maggie"
     }
 
-    private static var idleTitle: String { "Update \(appName)…" }
+    private static var idleTitle: String { "Update \(appName) from Source…" }
 
     @objc private func update(_ sender: Any?) {
         guard build == nil, let script = Self.installScript else { return }
 
         let alert = NSAlert()
-        alert.messageText = "Update \(Self.appName)?"
+        alert.messageText = "Update \(Self.appName) from source?"
         alert.informativeText = """
             Builds the latest version from \(script.deletingLastPathComponent().deletingLastPathComponent().path). \
             That takes a few minutes, and \(Self.appName) keeps working meanwhile. Then it restarts, \

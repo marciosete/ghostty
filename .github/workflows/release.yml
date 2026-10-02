@@ -1,0 +1,184 @@
+# Every push to main becomes a release: Maggie.app built universal, signed and
+# notarized when the Apple secrets are set (ad hoc otherwise), published on GitHub
+# Releases as a zip and a DMG, with the Sparkle appcast the app updates from.
+#
+# Secrets, all optional:
+#   MACOS_CERTIFICATE        Developer ID Application certificate, .p12 as base64
+#   MACOS_CERTIFICATE_PWD    its password
+#   MACOS_CERTIFICATE_NAME   its identity, "Developer ID Application: Name (TEAMID)"
+#   APPLE_ID                 the Apple ID to notarize with
+#   APPLE_TEAM_ID            its team
+#   APPLE_APP_PASSWORD       an app-specific password for it
+#   SPARKLE_PRIVATE_KEY      the EdDSA key pairing fork/sparkle-public.key, from
+#                            `generate_keys --account Maggie -x`
+#
+# Without the certificate the app is signed ad hoc and Gatekeeper asks on first
+# open; without the Sparkle key no appcast is published and the app can't update
+# from the release.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      REPO_URL: https://github.com/${{ github.repository }}
+      # Which optional secrets are set; a step's `if` can't read secrets directly.
+      HAS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
+      HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The build number is the commit count.
+          fetch-depth: 0
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Version
+        id: version
+        run: |
+          build=$(git rev-list --count HEAD)
+          version=$(git log -1 --format=%cd --date=format:%Y.%-m.%-d)
+          commit=$(git rev-parse --short HEAD)
+          {
+            echo "build=$build"
+            echo "version=$version"
+            echo "commit=$commit"
+            echo "tag=v$version-$build"
+          } >> "$GITHUB_OUTPUT"
+          xcodebuild -version
+
+      - name: Build GhosttyKit
+        run: zig build -Doptimize=ReleaseFast -Demit-macos-app=false
+
+      - name: Build Ghostty.app
+        run: |
+          cd macos
+          xcodebuild -target Ghostty -configuration ReleaseLocal
+
+      - name: Package Maggie.app
+        run: |
+          fork/package.sh macos/build/ReleaseLocal/Ghostty.app build/Maggie.app \
+            --version "${{ steps.version.outputs.version }}" \
+            --build "${{ steps.version.outputs.build }}" \
+            --commit "${{ steps.version.outputs.commit }}"
+
+      - name: Import signing certificate
+        if: env.HAS_CERTIFICATE == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          keychain_pwd=$(uuidgen)
+          security create-keychain -p "$keychain_pwd" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$keychain_pwd" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_pwd" build.keychain
+          rm certificate.p12
+
+      - name: Sign
+        env:
+          MACOS_CERTIFICATE_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+        run: |
+          app=build/Maggie.app
+          identity="${MACOS_CERTIFICATE_NAME:--}"
+          # A trusted timestamp needs a real certificate; ad hoc signatures can't have one.
+          timestamp=""
+          [ "$identity" = "-" ] || timestamp="--timestamp"
+          sparkle="$app/Contents/Frameworks/Sparkle.framework/Versions/B"
+          # Sparkle's helpers are separate code and are signed one by one, innermost
+          # first; the app's own signature then covers the whole bundle.
+          for item in \
+            "$sparkle/XPCServices/Downloader.xpc" \
+            "$sparkle/XPCServices/Installer.xpc" \
+            "$sparkle/Autoupdate" \
+            "$sparkle/Updater.app" \
+            "$app/Contents/Frameworks/Sparkle.framework" \
+            "$app/Contents/PlugIns/DockTilePlugin.plugin"
+          do
+            codesign --force --sign "$identity" --options runtime $timestamp "$item"
+          done
+          codesign --force --sign "$identity" --options runtime $timestamp \
+            --entitlements macos/Ghostty.entitlements "$app"
+          codesign --verify --deep --strict "$app"
+
+      - name: Notarize app
+        if: env.HAS_NOTARIZATION == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials notary \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          ditto -c -k --keepParent build/Maggie.app notarize.zip
+          xcrun notarytool submit notarize.zip --keychain-profile notary --wait
+          xcrun stapler staple build/Maggie.app
+          rm notarize.zip
+
+      - name: Archive
+        env:
+          MACOS_CERTIFICATE_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+        run: |
+          mkdir -p dist dmg
+          ditto -c -k --keepParent build/Maggie.app dist/Maggie-macos-universal.zip
+          ditto build/Maggie.app dmg/Maggie.app
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname Maggie -srcfolder dmg -ov -format UDZO Maggie.dmg
+          [ -z "$MACOS_CERTIFICATE_NAME" ] || codesign --force --sign "$MACOS_CERTIFICATE_NAME" --timestamp Maggie.dmg
+
+      - name: Notarize DMG
+        if: env.HAS_NOTARIZATION == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+        run: |
+          xcrun notarytool submit Maggie.dmg --keychain-profile notary --wait
+          xcrun stapler staple Maggie.dmg
+
+      - name: Appcast
+        if: env.HAS_SPARKLE_KEY == 'true'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          SPARKLE_VERSION: 2.9.6
+        run: |
+          curl -sSL -o sparkle.zip \
+            "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-for-Swift-Package-Manager.zip"
+          mkdir sparkle && unzip -q sparkle.zip -d sparkle
+          echo -n "$SPARKLE_PRIVATE_KEY" > sparkle.key
+          sparkle/bin/generate_appcast \
+            --ed-key-file sparkle.key \
+            --download-url-prefix "$REPO_URL/releases/download/${{ steps.version.outputs.tag }}/" \
+            --link "$REPO_URL/releases" \
+            -o appcast.xml dist
+          rm sparkle.key
+          cat appcast.xml
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Maggie ${{ steps.version.outputs.version }} (${{ steps.version.outputs.build }})
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: |
+            dist/Maggie-macos-universal.zip
+            Maggie.dmg
+            appcast.xml

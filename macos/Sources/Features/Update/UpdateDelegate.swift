@@ -7,6 +7,9 @@ extension UpdateDriver: SPUUpdaterDelegate {
             return nil
         }
 
+        // Maggie has one feed: the latest release on GitHub.
+        if Maggie.isMaggie { return Maggie.feedURL }
+
         // Sparkle supports a native concept of "channels" but it requires that
         // you share a single appcast file. We don't want to do that so we
         // do this instead.

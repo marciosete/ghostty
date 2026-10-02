@@ -77,6 +77,16 @@ Maggie installs next to the official Ghostty, under its own name and bundle
 ID, with its own preferences and Dock entry. It never updates from Ghostty's
 feed.
 
+### Download
+
+Get `Maggie.dmg` from the
+[latest release](https://github.com/marciosete/maggie/releases/latest) and drag
+Maggie to Applications. Every push to `main` becomes a release, so the latest
+one is always current.
+
+Once installed, **Maggie › Check for Updates…** gets the next release from
+GitHub, and Maggie can check on its own if you let it.
+
 ### From source
 
 You need [Zig 0.16](https://ziglang.org/download/), Xcode 26 or newer and
@@ -98,17 +108,19 @@ Override `DEST` to install elsewhere (`DEST=~/Applications fork/install.sh`).
 with. macOS remembers privacy answers (Photos, Documents, …) per signature, so
 without it every reinstall asks again. Skip it and the app is signed ad hoc.
 
-### Updating
-
-**Maggie › Update Maggie…** builds the latest version from the checkout it was
+A Maggie installed this way updates from the releases like any other, and also
+has **Maggie › Update Maggie from Source…**, which builds the checkout it was
 installed from, restarts, and brings every window, tab and session back. It
 runs `fork/install.sh --build-only` while you keep working, then
 `--install-staged` after Maggie quits.
 
-### Signed releases
+### Releases
 
-Notarized builds, a Homebrew cask and in-app updates from Maggie's own feed are
-on the way. Until then, build from source.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds every
+push to `main` into a universal `Maggie.app`, signs and notarizes it when the
+Apple secrets are set, and publishes a zip, a DMG and the Sparkle appcast as a
+GitHub release. The appcast is signed with the key pairing
+`fork/sparkle-public.key`; the app accepts no update that isn't.
 
 ## How it works
 
