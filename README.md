@@ -32,14 +32,20 @@ Ghostty, Anthropic or OpenAI.
 ## What it does
 
 **A new session is an agent session.** Open a tab, split or window and your
-agent starts in it: Claude Code or Codex, whichever **Settings…** (⌘,) says.
-In a git repository it gets its own worktree (`claude -w`, `codex --worktree`),
+primary agent starts in it: Claude Code or Codex. **Settings…** (⌘,) says
+which agents are enabled, either or both, and which is primary. In a git repository it gets its own worktree (`claude -w`, `codex --worktree`),
 so what it changes is its own, and a session opened from a worktree starts from
 the main checkout, so two never share one. `/exit` drops to the shell and the
 tab stays. Turn it off in Settings or under **View › Start … in New Sessions**;
 a shell startup file that starts an agent itself can check
 `MAGGIE_CLAUDE_CODE_START`, set in these terminals (with `MAGGIE_AGENT` naming
 the agent), and stand down.
+
+**Pivot between agents.** A session's menu in the sidebar hands it to the other
+agent, in the same worktree: **New Session** starts it fresh, **Continue the
+Conversation** writes the conversation so far out as Markdown and starts the
+other agent reading it, so Codex picks up where Claude Code left off, or back
+again, as often as you like. The old session stays until you close it.
 
 **A sidebar of sessions.** Tabs are vertical, named, grouped and searchable. A
 session's tab takes the colour of what its agent is doing:

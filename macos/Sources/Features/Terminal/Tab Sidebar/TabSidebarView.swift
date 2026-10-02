@@ -1201,6 +1201,19 @@ private struct TabSidebarTabRow: View {
                 Button("Mark as Unread") { window.markClaudeCodeActivityUnseen() }
             }
 
+            // Hand the session to the other agent, in the same directory: fresh, or
+            // carrying the conversation so far.
+            let session = info?.sessions.first
+            ForEach(CodingAgentSettings.shared.pivotTargets(from: session?.agent), id: \.self) { agent in
+                Menu(session == nil ? "Start \(agent.displayName) Here" : "Pivot to \(agent.displayName)") {
+                    Button("New Session") { model.pivot(window, to: agent, carryingConversation: false) }
+                    if session?.transcript != nil {
+                        Button("Continue the Conversation") { model.pivot(window, to: agent, carryingConversation: true) }
+                            .help("Writes the conversation out and starts \(agent.displayName) reading it")
+                    }
+                }
+            }
+
             if let info, info.directory != nil || info.branch != nil || !info.sessions.isEmpty {
                 Divider()
                 if let directory = info.directory {

@@ -653,9 +653,15 @@ final class TabSidebarModel: ObservableObject {
     /// a terminal in that group, so it opens in the group's project even when the
     /// selected tab belongs to another group. Without a group, it inherits from this
     /// window's focused terminal. In a folder, it starts in the folder's directory
-    /// whatever it would inherit. Returns the new tab's window.
+    /// whatever it would inherit. With `configuration`, its directory, input and
+    /// environment override all of that: a pivot starts another agent in a session's
+    /// own directory. Returns the new tab's window.
     @discardableResult
-    func newTab(inGroup groupID: UUID? = nil, inFolder: UUID? = nil) -> TerminalWindow? {
+    func newTab(
+        inGroup groupID: UUID? = nil,
+        inFolder: UUID? = nil,
+        configuration: Ghostty.SurfaceConfiguration? = nil
+    ) -> TerminalWindow? {
         guard let hostWindow,
               let hostController = hostWindow.terminalController else { return nil }
 
@@ -690,6 +696,13 @@ final class TabSidebarModel: ObservableObject {
             config.workingDirectory = tabFolder.path
             baseConfig = config
         }
+        if let configuration {
+            var config = baseConfig ?? Ghostty.SurfaceConfiguration()
+            config.workingDirectory = configuration.workingDirectory ?? config.workingDirectory
+            config.initialInput = configuration.initialInput
+            config.environmentVariables.merge(configuration.environmentVariables) { _, new in new }
+            baseConfig = config
+        }
 
         guard let controller = TerminalController.newTab(
             hostController.ghostty,
@@ -713,6 +726,61 @@ final class TabSidebarModel: ObservableObject {
         // The tab group takes a main loop turn to settle after adding a tab.
         DispatchQueue.main.async { [weak self] in self?.normalizeOrder() }
         return window
+    }
+
+    // MARK: Pivoting
+
+    /// The handoff each pivoted session started from, so a session pivoted again
+    /// carries the whole chain with it, not just its own part.
+    private var handoffs: [ObjectIdentifier: URL] = [:]
+
+    /// Opens a new session of `agent` beside `window`, in the same group and in the
+    /// directory of `window`'s session, which is its worktree when it has one, so the
+    /// files carry over. With `carryingConversation`, the session's conversation is
+    /// written out and the new agent starts by reading it. The old session stays.
+    func pivot(_ window: TerminalWindow, to agent: CodingAgent, carryingConversation: Bool) {
+        let info = infos[ObjectIdentifier(window)]
+        let session = info?.sessions.first
+        let directory = session?.cwd ?? info?.directory
+            ?? window.terminalController?.focusedSurface?.pwd
+
+        var prompt: String?
+        if carryingConversation, let session, let transcript = session.transcript {
+            let earlier = handoffs[ObjectIdentifier(window)].flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            let entries = AgentHandoff.entries(inTranscript: transcript, of: session.agent)
+            let markdown = AgentHandoff.markdown(entries: entries, from: session.agent, to: agent, earlier: earlier)
+            do {
+                let handoff = try AgentHandoff.write(markdown, from: session.agent, session: session.id)
+                prompt = AgentHandoff.prompt(from: session.agent, handoff: handoff)
+                pendingHandoff = handoff
+            } catch {
+                Self.showPivotFailure(error, in: window)
+                return
+            }
+        }
+
+        var config = Ghostty.SurfaceConfiguration()
+        config.workingDirectory = directory
+        config.initialInput = AgentHandoff.command(for: agent, prompt: prompt) + "\n"
+        config.environmentVariables = [
+            AgentStart.environmentVariable: "1",
+            AgentStart.agentEnvironmentVariable: agent.rawValue,
+        ]
+        let opened = newTab(inGroup: window.userTabGroupID, inFolder: window.userTabFolderID, configuration: config)
+        if let opened, let handoff = pendingHandoff {
+            handoffs[ObjectIdentifier(opened)] = handoff
+        }
+        pendingHandoff = nil
+    }
+
+    private var pendingHandoff: URL?
+
+    private static func showPivotFailure(_ error: Error, in window: NSWindow) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "The conversation couldn't be written out"
+        alert.informativeText = error.localizedDescription
+        alert.beginSheetModal(for: window)
     }
 
     // MARK: Folder Actions

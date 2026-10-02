@@ -140,23 +140,71 @@ enum CodingAgent: String, CaseIterable, Codable {
     }
 }
 
-/// Which agent Maggie starts in new sessions. Settings has the switch; the View menu
-/// shows which one is on.
+/// Which agents Maggie offers, and which of them new sessions start. Settings has the
+/// switches; the View menu shows which one is on.
+///
+/// An agent that is enabled can be started in new sessions and pivoted to from a
+/// session of the other. The primary is the one new sessions start, and is always one
+/// of the enabled agents, or nil when none is.
 @MainActor
 final class CodingAgentSettings: ObservableObject {
     static let shared = CodingAgentSettings()
 
-    private static let agentKey = "CodingAgent"
+    private static let primaryKey = "CodingAgent"
+    private static let enabledKey = "CodingAgentsEnabled"
 
-    @Published var agent: CodingAgent {
+    /// The agents that can be used, in declaration order.
+    @Published private(set) var enabled: [CodingAgent] {
         didSet {
-            UserDefaults.ghostty.set(agent.rawValue, forKey: Self.agentKey)
+            UserDefaults.ghostty.set(enabled.map(\.rawValue), forKey: Self.enabledKey)
+            AgentStart.shared.updateMenuItem()
+        }
+    }
+
+    /// The agent new sessions start, or nil when no agent is enabled.
+    @Published private(set) var primary: CodingAgent? {
+        didSet {
+            UserDefaults.ghostty.set(primary?.rawValue, forKey: Self.primaryKey)
             AgentStart.shared.updateMenuItem()
         }
     }
 
     private init() {
-        agent = UserDefaults.ghostty.string(forKey: Self.agentKey).flatMap(CodingAgent.init(rawValue:)) ?? .claude
+        let defaults = UserDefaults.ghostty
+        let stored = (defaults.stringArray(forKey: Self.enabledKey) ?? CodingAgent.allCases.map(\.rawValue))
+            .compactMap(CodingAgent.init(rawValue:))
+        let enabled = CodingAgent.allCases.filter(stored.contains)
+        let wanted = defaults.string(forKey: Self.primaryKey).flatMap(CodingAgent.init(rawValue:)) ?? .claude
+        // The wrappers are set directly: assigning the properties would run their
+        // observers, which reach `AgentStart`, which reads these settings mid-init.
+        _enabled = Published(initialValue: enabled)
+        _primary = Published(initialValue: enabled.contains(wanted) ? wanted : enabled.first)
+    }
+
+    func isEnabled(_ agent: CodingAgent) -> Bool {
+        enabled.contains(agent)
+    }
+
+    /// Turns an agent on or off. Turning the primary off makes another enabled agent
+    /// the primary, or none; turning the first one on makes it the primary.
+    func setEnabled(_ agent: CodingAgent, _ on: Bool) {
+        guard isEnabled(agent) != on else { return }
+        enabled = CodingAgent.allCases.filter { $0 == agent ? on : enabled.contains($0) }
+        if let primary, enabled.contains(primary) { return }
+        primary = enabled.first
+    }
+
+    /// Makes `agent` the one new sessions start. It is enabled if it wasn't.
+    func setPrimary(_ agent: CodingAgent) {
+        if !isEnabled(agent) {
+            enabled = CodingAgent.allCases.filter { $0 == agent || enabled.contains($0) }
+        }
+        primary = agent
+    }
+
+    /// The enabled agents a session of `agent` can pivot to: the others.
+    func pivotTargets(from agent: CodingAgent?) -> [CodingAgent] {
+        enabled.filter { $0 != agent }
     }
 }
 

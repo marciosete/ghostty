@@ -37,9 +37,9 @@ final class AgentStart: ObservableObject {
         }
     }
 
-    /// The agent started, from Settings.
-    var agent: CodingAgent {
-        CodingAgentSettings.shared.agent
+    /// The agent started, from Settings: the primary of the enabled ones, if any.
+    var agent: CodingAgent? {
+        CodingAgentSettings.shared.primary
     }
 
     private init() {
@@ -53,8 +53,7 @@ final class AgentStart: ObservableObject {
     /// Gives `config` the start command and the marker, unless it already has input
     /// (a restored session resuming) or this is off.
     func apply(to config: inout Ghostty.SurfaceConfiguration) {
-        guard isEnabled, config.initialInput == nil else { return }
-        let agent = agent
+        guard isEnabled, let agent, config.initialInput == nil else { return }
         config.initialInput = Self.command(for: agent, in: config.workingDirectory) + "\n"
         config.environmentVariables[Self.environmentVariable] = "1"
         config.environmentVariables[Self.agentEnvironmentVariable] = agent.rawValue
@@ -118,10 +117,11 @@ final class AgentStart: ObservableObject {
     }
 
     /// The menu item names the agent Settings chose, so it is called again when that
-    /// changes.
+    /// changes. With no agent enabled there is nothing to start, and it says so.
     func updateMenuItem() {
-        menuItem?.title = "Start \(agent.displayName) in New Sessions"
+        menuItem?.title = "Start \(agent?.displayName ?? "an Agent") in New Sessions"
         menuItem?.state = isEnabled ? .on : .off
+        menuItem?.isEnabled = agent != nil
     }
 
     @objc private func toggle(_ sender: Any?) {

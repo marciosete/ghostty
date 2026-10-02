@@ -15,18 +15,35 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Agent", selection: $agentSettings.agent) {
-                    ForEach(CodingAgent.allCases, id: \.self) { agent in
-                        Text(agent.displayName).tag(agent)
-                    }
+                ForEach(CodingAgent.allCases, id: \.self) { agent in
+                    Toggle(agent.displayName, isOn: Binding(
+                        get: { agentSettings.isEnabled(agent) },
+                        set: { agentSettings.setEnabled(agent, $0) }))
                 }
-                .pickerStyle(.radioGroup)
 
-                Toggle("Start \(agentSettings.agent.displayName) in new sessions", isOn: $agentStart.isEnabled)
+                if agentSettings.enabled.isEmpty {
+                    LabeledContent("Primary") {
+                        Text("No agent enabled").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Picker("Primary", selection: Binding(
+                        get: { agentSettings.primary ?? agentSettings.enabled[0] },
+                        set: { agentSettings.setPrimary($0) })
+                    ) {
+                        ForEach(agentSettings.enabled, id: \.self) { agent in
+                            Text(agent.displayName).tag(agent)
+                        }
+                    }
+                    .pickerStyle(.radioGroup)
+                    .horizontalRadioGroupLayout()
+                }
+
+                Toggle("Start the primary agent in new sessions", isOn: $agentStart.isEnabled)
+                    .disabled(agentSettings.primary == nil)
             } header: {
-                Text("Coding Agent")
+                Text("Coding Agents")
             } footer: {
-                Text("A new session types the start command into its shell, in the session's own worktree inside a git repository. A restored session resumes the session it was running, whichever agent that was.")
+                Text("A new session starts the primary agent, typing the command into its shell, in the session's own worktree inside a git repository. An enabled agent can also be pivoted to from a session's menu in the sidebar, fresh or continuing the conversation. A restored session resumes the session it was running, whichever agent that was.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
