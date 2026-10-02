@@ -576,10 +576,14 @@ struct UsageTranscriptReaderTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let first = try #require(UsageTranscriptReader.read(path: url.path, provider: .claude))
 
-        try (claudeLine("x", output: 99) + "\n" + claudeLine("y") + "\n").write(to: url, atomically: true, encoding: .utf8)
+        // The new first line is longer than the old one, so the guard bytes before the old
+        // position can't match by chance. (A line of the same length differing in two
+        // characters matched whenever JSON key order, random per process, put both
+        // outside the guard.)
+        try (claudeLine("rewritten", output: 99) + "\n" + claudeLine("y") + "\n").write(to: url, atomically: true, encoding: .utf8)
         let second = try #require(UsageTranscriptReader.read(path: url.path, provider: .claude, resumingFrom: first.position))
         #expect(!second.resumed)
-        #expect(second.records.map(\.dedupeKey) == ["x:", "y:"])
+        #expect(second.records.map(\.dedupeKey) == ["rewritten:", "y:"])
     }
 
     @Test func readsALineLongerThanOneChunk() throws {
