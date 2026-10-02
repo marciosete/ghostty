@@ -81,8 +81,8 @@ feed.
 
 Get `Maggie.dmg` from the
 [latest release](https://github.com/marciosete/maggie/releases/latest) and drag
-Maggie to Applications. Every push to `main` becomes a release, so the latest
-one is always current.
+Maggie to Applications. Every feature or fix pushed to `main` becomes a
+release, so the latest one is always current.
 
 Once installed, **Maggie › Check for Updates…** gets the next release from
 GitHub, and Maggie can check on its own if you let it.
@@ -119,9 +119,11 @@ runs `fork/install.sh --build-only` while you keep working, then
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds every
 push to `main` into a universal `Maggie.app`, signs and notarizes it when the
 Apple secrets are set, and publishes a zip, a DMG and the Sparkle appcast as a
-GitHub release. Versions are semver: `fork/VERSION` holds `MAJOR.MINOR`, and
-each push since it last changed counts one patch, so releases run `0.1.0`,
-`0.1.1`, … until the file is bumped. The appcast is signed with the key pairing
+GitHub release. Versions are semver and the commit messages decide them, as
+semantic-release does: a `feat:` is a minor release, a `fix:` or `perf:` a
+patch, a breaking change a major, and a push with none of those makes no
+release (see [CONTRIBUTING.md](CONTRIBUTING.md)). The release notes are the
+commits, grouped. The appcast is signed with the key pairing
 `fork/sparkle-public.key`; the app accepts no update that isn't.
 
 ## How it works

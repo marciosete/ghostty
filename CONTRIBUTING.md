@@ -28,8 +28,14 @@ status, say what Claude Code was doing at the time.
   `swiftlint lint --strict --fix` and `zig fmt .` before pushing.
 - Everything in `macos/Sources/Features` that Maggie added has tests in
   `macos/Tests`; add to them when you change behaviour.
-- Write the commit message as a sentence about what the user gets, like the
-  ones in the log.
+- Commit messages are [conventional commits](https://www.conventionalcommits.org),
+  and they decide the version: `feat(scope): …` is a minor release,
+  `fix(scope): …` or `perf(scope): …` a patch, and a `!` after the type or a
+  `BREAKING CHANGE:` footer a major. Anything else (`docs`, `chore`, `ci`,
+  `refactor`, `test`) ships with the next release but doesn't cause one. The
+  scope names what changed — `sidebar`, `workspace`, `source-control`, `usage`,
+  `timing`, `capture`, `speaker`, `install`, `release` — and the subject is a
+  sentence about what the person gets, like the ones in the log.
 
 ## AI
 

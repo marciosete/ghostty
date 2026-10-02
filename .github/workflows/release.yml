@@ -1,7 +1,11 @@
-# Every push to main becomes a release: Maggie.app built universal, signed and
-# notarized when the Apple secrets are set (ad hoc otherwise), published on GitHub
-# Releases as a zip and a DMG, with the Sparkle appcast the app updates from.
-# Versions are semver: fork/VERSION gives MAJOR.MINOR, pushes count the patch.
+# Every push to main that carries a feat, fix or perf commit becomes a release:
+# Maggie.app built universal, signed and notarized when the Apple secrets are
+# set (ad hoc otherwise), published on GitHub Releases as a zip and a DMG, with
+# the Sparkle appcast the app updates from.
+#
+# Versions are semver, decided by the commit messages like semantic-release:
+# feat → minor, fix/perf → patch, a breaking change → major. Tags are the only
+# record; see fork/next-version.sh.
 #
 # Secrets, all optional:
 #   MACOS_CERTIFICATE        Developer ID Application certificate, .p12 as base64
@@ -32,45 +36,65 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # What the commits since the last release call for. No feat, fix or perf
+  # since the last tag means no release.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      bump: ${{ steps.next.outputs.bump }}
+      version: ${{ steps.next.outputs.version }}
+      build: ${{ steps.next.outputs.build }}
+      commit: ${{ steps.next.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Tags decide the version, and the commit count is the build number.
+          fetch-depth: 0
+
+      - name: Next version
+        id: next
+        run: |
+          fork/next-version.sh --notes notes.md | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "build=$(git rev-list --count HEAD)"
+            echo "commit=$(git rev-parse --short HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          cat notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: notes.md
+
   release:
+    needs: version
+    if: needs.version.outputs.bump != 'none'
     runs-on: macos-26
     timeout-minutes: 90
     env:
       REPO_URL: https://github.com/${{ github.repository }}
+      VERSION: ${{ needs.version.outputs.version }}
+      BUILD: ${{ needs.version.outputs.build }}
+      COMMIT: ${{ needs.version.outputs.commit }}
+      TAG: v${{ needs.version.outputs.version }}
       # Which optional secrets are set; a step's `if` can't read secrets directly.
       HAS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
       HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
       HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          # The build number is the commit count.
-          fetch-depth: 0
 
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
 
-      - name: Version
-        id: version
+      - uses: actions/download-artifact@v4
+        with:
+          name: notes
+
+      - name: Toolchain
         run: |
-          # Semver: fork/VERSION is MAJOR.MINOR, and the patch is the number of
-          # commits since that file last changed, so a push is 0.1.3, the next
-          # 0.1.4, and bumping the file starts 0.2.0. The build number is the commit
-          # count, which Sparkle compares and which only ever goes up.
-          series=$(tr -d '[:space:]' < fork/VERSION)
-          since=$(git log -1 --format=%H -- fork/VERSION)
-          patch=$(git rev-list --count "$since..HEAD")
-          version="$series.$patch"
-          build=$(git rev-list --count HEAD)
-          commit=$(git rev-parse --short HEAD)
-          {
-            echo "build=$build"
-            echo "version=$version"
-            echo "commit=$commit"
-            echo "tag=v$version"
-          } >> "$GITHUB_OUTPUT"
-          echo "Maggie $version (build $build, $commit)"
+          echo "Maggie $VERSION (build $BUILD, $COMMIT)"
           xcodebuild -version
 
       - name: Build GhosttyKit
@@ -84,9 +108,7 @@ jobs:
       - name: Package Maggie.app
         run: |
           fork/package.sh macos/build/ReleaseLocal/Ghostty.app build/Maggie.app \
-            --version "${{ steps.version.outputs.version }}" \
-            --build "${{ steps.version.outputs.build }}" \
-            --commit "${{ steps.version.outputs.commit }}"
+            --version "$VERSION" --build "$BUILD" --commit "$COMMIT"
 
       - name: Import signing certificate
         if: env.HAS_CERTIFICATE == 'true'
@@ -156,8 +178,6 @@ jobs:
 
       - name: Notarize DMG
         if: env.HAS_NOTARIZATION == 'true'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
         run: |
           xcrun notarytool submit Maggie.dmg --keychain-profile notary --wait
           xcrun stapler staple Maggie.dmg
@@ -174,7 +194,7 @@ jobs:
           echo -n "$SPARKLE_PRIVATE_KEY" > sparkle.key
           sparkle/bin/generate_appcast \
             --ed-key-file sparkle.key \
-            --download-url-prefix "$REPO_URL/releases/download/${{ steps.version.outputs.tag }}/" \
+            --download-url-prefix "$REPO_URL/releases/download/$TAG/" \
             --link "$REPO_URL/releases" \
             -o appcast.xml dist
           rm sparkle.key
@@ -183,10 +203,10 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Maggie ${{ steps.version.outputs.version }}
+          tag_name: ${{ env.TAG }}
+          name: Maggie ${{ needs.version.outputs.version }}
           target_commitish: ${{ github.sha }}
-          generate_release_notes: true
+          body_path: notes.md
           files: |
             dist/Maggie-macos-universal.zip
             Maggie.dmg
