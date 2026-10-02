@@ -70,7 +70,8 @@ jobs:
     needs: version
     if: needs.version.outputs.bump != 'none'
     runs-on: macos-26
-    timeout-minutes: 90
+    # The notary service has taken an hour on a first submission.
+    timeout-minutes: 180
     env:
       REPO_URL: https://github.com/${{ github.repository }}
       VERSION: ${{ needs.version.outputs.version }}
@@ -170,22 +171,10 @@ jobs:
         env:
           MACOS_CERTIFICATE_NAME: ${{ env.HAS_CERTIFICATE == 'true' && secrets.MACOS_CERTIFICATE_NAME || '' }}
         run: |
-          mkdir -p dist dmg
+          mkdir -p dist
           ditto -c -k --keepParent build/Maggie.app dist/Maggie-macos-universal.zip
-          ditto build/Maggie.app dmg/Maggie.app
-          # The drag-to-Applications window: fork/dmg/background.tiff draws the arrow
-          # between these two positions (see fork/dmg/background.py).
-          brew install --quiet create-dmg
-          create-dmg \
-            --volname Maggie \
-            --volicon build/Maggie.app/Contents/Resources/Maggie.icns \
-            --background fork/dmg/background.tiff \
-            --window-pos 200 120 --window-size 660 400 \
-            --icon-size 128 \
-            --icon Maggie.app 180 170 --hide-extension Maggie.app \
-            --app-drop-link 480 170 \
-            --no-internet-enable \
-            Maggie.dmg dmg
+          # The drag-to-Applications window, laid out without Finder (fork/dmg/build.sh).
+          fork/dmg/build.sh build/Maggie.app Maggie.dmg
           [ -z "$MACOS_CERTIFICATE_NAME" ] || codesign --force --sign "$MACOS_CERTIFICATE_NAME" --timestamp Maggie.dmg
 
       - name: Notarize DMG
