@@ -1,15 +1,15 @@
 import AppKit
 
-/// Updates Ghostty Pro, this fork installed by `fork/install-ghostty-pro.sh`, from the
-/// checkout it was built from: builds and stages the new version while this one keeps
-/// running, then quits and leaves the script to put the new version in place and open it.
+/// Updates Maggie, installed by `fork/install.sh`, from the checkout it was built from:
+/// builds and stages the new version while this one keeps running, then quits and
+/// leaves the script to put the new version in place and open it.
 /// The workspace is saved on quit, so windows, tabs and Claude Code sessions come back.
 @MainActor
-final class GhosttyProUpdater: NSObject {
-    static let shared = GhosttyProUpdater()
+final class MaggieUpdater: NSObject {
+    static let shared = MaggieUpdater()
 
     /// Set by the install script: the checkout the app was built from.
-    static let sourceRootKey = "GhosttyProSourceRoot"
+    static let sourceRootKey = "MaggieSourceRoot"
 
     private weak var menuItem: NSMenuItem?
     private var build: Process?
@@ -17,7 +17,7 @@ final class GhosttyProUpdater: NSObject {
     /// The install script of the checkout the app was built from, if it has one.
     static var installScript: URL? {
         guard let root = Bundle.main.object(forInfoDictionaryKey: sourceRootKey) as? String else { return nil }
-        let script = URL(fileURLWithPath: root).appendingPathComponent("fork/install-ghostty-pro.sh")
+        let script = URL(fileURLWithPath: root).appendingPathComponent("fork/install.sh")
         return FileManager.default.isExecutableFile(atPath: script.path) ? script : nil
     }
 
@@ -27,7 +27,7 @@ final class GhosttyProUpdater: NSObject {
             .appendingPathComponent("Library/Logs/\(appName)/update.log")
     }
 
-    /// Adds "Update Ghostty Pro…" to `menu` after `item`, if the app knows its checkout.
+    /// Adds "Update Maggie…" to `menu` after `item`, if the app knows its checkout.
     func installMenuItem(in menu: NSMenu, after item: NSMenuItem?) {
         guard Self.installScript != nil else { return }
 
@@ -39,7 +39,7 @@ final class GhosttyProUpdater: NSObject {
     }
 
     private static var appName: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Ghostty Pro"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Maggie"
     }
 
     private static var idleTitle: String { "Update \(appName)…" }

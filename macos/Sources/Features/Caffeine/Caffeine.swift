@@ -95,7 +95,7 @@ final class Caffeine: ObservableObject {
         IOPMAssertionCreateWithName(
             kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            "Ghostty Pro keeps this Mac awake" as CFString,
+            "Maggie keeps this Mac awake" as CFString,
             &assertion)
 
         let now = Date()
@@ -209,7 +209,7 @@ final class Caffeine: ObservableObject {
         let escaped = script
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let prompt = "Ghostty Pro needs your password once to keep this Mac awake with the lid closed."
+        let prompt = "Maggie needs your password once to keep this Mac awake with the lid closed."
         let source = "do shell script \"\(escaped)\" with prompt \"\(prompt)\" with administrator privileges"
 
         var error: NSDictionary?

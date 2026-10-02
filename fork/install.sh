@@ -1,40 +1,43 @@
 #!/usr/bin/env bash
 #
-# Builds a release version of this fork and installs it as its own app, next to
-# the official Ghostty:
+# Builds a release version of Maggie and installs it as its own app, next to the
+# official Ghostty:
 #
-#   - named "Ghostty Pro" with its own bundle ID, so it has its own preferences,
-#     saved windows and Dock/⌘Tab entry
-#   - uses Ghostty's Blueprint icon so it's easy to tell apart
+#   - named "Maggie" with its own bundle ID, so it has its own preferences, saved
+#     workspace and Dock/⌘Tab entry
+#   - with the Maggie icon from fork/icon
 #   - never auto-updates (a fork must not update from the official feed)
 #   - signed with a stable local certificate, so macOS privacy answers (Photos,
 #     Documents, ...) survive reinstalls. Create it once with
 #     fork/create-signing-identity.sh; without it the app is signed ad hoc.
 #
-# It still reads the same Ghostty config file as the official app.
+# It reads the same Ghostty config file as the official app.
 #
-# Usage: fork/install-ghostty-pro.sh [--build-only | --install-staged [--after PID]]
+# Usage: fork/install.sh [--build-only | --install-staged [--after PID]]
 #
-#   (no option)        build and install; Ghostty Pro must not be running
+#   (no option)        build and install; Maggie must not be running
 #   --build-only       build and stage the app, without touching the installed one, so
-#                      it can run while Ghostty Pro is open
+#                      it can run while Maggie is open
 #   --install-staged   install the staged app and open it. With --after, wait for that
-#                      process (the running Ghostty Pro) to quit first
+#                      process (the running Maggie) to quit first
 #
-# Ghostty Pro's "Update Ghostty Pro…" menu item runs --build-only, then quits and leaves
+# Maggie's "Update Maggie…" menu item runs --build-only, then quits and leaves
 # --install-staged --after <its pid> to put the new version in its place.
 #
 # Override with APP_NAME, BUNDLE_ID, DEST or SIGN_IDENTITY, e.g. DEST=~/Applications.
 
 set -euo pipefail
 
-APP_NAME="${APP_NAME:-Ghostty Pro}"
-
-# The bundle ID predates the "Ghostty Pro" name. It is never shown, and keeping it
-# keeps saved windows and preferences across renames.
-BUNDLE_ID="${BUNDLE_ID:-com.marciosete.terminal-pro}"
+APP_NAME="${APP_NAME:-Maggie}"
+BUNDLE_ID="${BUNDLE_ID:-com.marciosete.maggie}"
 DEST="${DEST:-/Applications}"
-SIGN_IDENTITY="${SIGN_IDENTITY:-Ghostty Pro Local Signing}"
+SIGN_IDENTITY="${SIGN_IDENTITY:-Maggie Local Signing}"
+
+# What the app was called before it was Maggie. An install under this ID is replaced,
+# and its preferences (the saved workspace among them) and Application Support are
+# copied over the first time.
+LEGACY_BUNDLE_ID="com.marciosete.terminal-pro"
+LEGACY_SIGN_IDENTITY="Ghostty Pro Local Signing"
 
 MODE=all
 AFTER_PID=""
@@ -60,16 +63,20 @@ bundle_id_of() {
     "$PLISTBUDDY" -c "Print :CFBundleIdentifier" "$1/Contents/Info.plist" 2>/dev/null || true
 }
 
+is_ours() {
+    [ "$1" = "$BUNDLE_ID" ] || [ "$1" = "$LEGACY_BUNDLE_ID" ]
+}
+
 # Only ever replace an app this script installed (never the official Ghostty).
-if [ -e "$TARGET" ] && [ "$(bundle_id_of "$TARGET")" != "$BUNDLE_ID" ]; then
-    echo "error: $TARGET exists and isn't this fork (bundle ID: $(bundle_id_of "$TARGET")). Not replacing it." >&2
+if [ -e "$TARGET" ] && ! is_ours "$(bundle_id_of "$TARGET")"; then
+    echo "error: $TARGET exists and isn't Maggie (bundle ID: $(bundle_id_of "$TARGET")). Not replacing it." >&2
     exit 1
 fi
 
 # Earlier installs under another name (e.g. before a rename) are replaced too.
 installs=()
 for app in "$DEST"/*.app; do
-    [ "$(bundle_id_of "$app")" = "$BUNDLE_ID" ] && installs+=("$app")
+    is_ours "$(bundle_id_of "$app")" && installs+=("$app")
 done
 
 refuse_if_running() {
@@ -105,30 +112,27 @@ build_and_stage() {
         -c "Set :CFBundleDisplayName $APP_NAME" \
         "$PLIST"
 
-    # The checkout it was built from, which its "Update Ghostty Pro…" menu item builds.
-    "$PLISTBUDDY" -c "Delete :GhosttyProSourceRoot" "$PLIST" 2>/dev/null || true
-    "$PLISTBUDDY" -c "Add :GhosttyProSourceRoot string $ROOT" "$PLIST"
+    # The checkout it was built from, which its "Update Maggie…" menu item builds.
+    "$PLISTBUDDY" -c "Delete :MaggieSourceRoot" "$PLIST" 2>/dev/null || true
+    "$PLISTBUDDY" -c "Add :MaggieSourceRoot string $ROOT" "$PLIST"
 
-    echo "==> Setting the Blueprint icon"
-    BLUEPRINT="$ROOT/macos/Assets.xcassets/Alternate Icons/BlueprintImage.imageset/macOS-AppIcon-1024px.png"
-    ICONSET="$WORK/icon.iconset"
-    mkdir "$ICONSET"
-    for size in 16 32 128 256 512; do
-        sips -z "$size" "$size" "$BLUEPRINT" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
-        double=$((size * 2))
-        sips -z "$double" "$double" "$BLUEPRINT" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
-    done
-    iconutil -c icns "$ICONSET" -o "$staging/Contents/Resources/GhosttyPro.icns"
+    echo "==> Setting the Maggie icon"
+    # Built by fork/icon/compose.py: the photo at large sizes, the flat drawing at small
+    # ones. The build's own icon (images/Maggie.icon) is one layer, so it can't do that.
+    iconutil -c icns "$ROOT/fork/icon/Maggie.iconset" -o "$staging/Contents/Resources/Maggie.icns"
 
-    # CFBundleIconName points at the official icon in the asset catalog and takes
-    # precedence over CFBundleIconFile, so remove it.
-    "$PLISTBUDDY" -c "Set :CFBundleIconFile GhosttyPro" "$PLIST"
+    # CFBundleIconName points at the icon in the asset catalog and takes precedence
+    # over CFBundleIconFile, so remove it.
+    "$PLISTBUDDY" -c "Set :CFBundleIconFile Maggie" "$PLIST"
     "$PLISTBUDDY" -c "Delete :CFBundleIconName" "$PLIST" 2>/dev/null || true
 
     # macOS ties privacy answers to the signature. An ad hoc one changes with every
-    # build, so it would ask again after each install.
+    # build, so it would ask again after each install. The identity from before the
+    # rename still works, and keeps the answers given to it.
     if security find-identity -p codesigning | grep -qF "\"$SIGN_IDENTITY\""; then
         SIGN_WITH="$SIGN_IDENTITY"
+    elif security find-identity -p codesigning | grep -qF "\"$LEGACY_SIGN_IDENTITY\""; then
+        SIGN_WITH="$LEGACY_SIGN_IDENTITY"
     else
         echo "warning: no \"$SIGN_IDENTITY\" signing identity; signing ad hoc." >&2
         echo "         Run fork/create-signing-identity.sh to keep privacy permissions across installs." >&2
@@ -158,8 +162,26 @@ wait_for_quit() {
         sleep 0.2
     done
     echo "error: process $AFTER_PID is still running. The new version is staged at $STAGED;" >&2
-    echo "       run fork/install-ghostty-pro.sh --install-staged after quitting it." >&2
+    echo "       run fork/install.sh --install-staged after quitting it." >&2
     exit 1
+}
+
+# Preferences and Application Support are keyed by bundle ID. Bring the old ID's
+# over, once, so the saved workspace and caches survive the rename.
+migrate_legacy_state() {
+    [ "$BUNDLE_ID" != "$LEGACY_BUNDLE_ID" ] || return 0
+
+    local prefs="$HOME/Library/Preferences"
+    if [ -f "$prefs/$LEGACY_BUNDLE_ID.plist" ] && [ ! -f "$prefs/$BUNDLE_ID.plist" ]; then
+        echo "==> Copying preferences from $LEGACY_BUNDLE_ID"
+        defaults export "$LEGACY_BUNDLE_ID" - | defaults import "$BUNDLE_ID" -
+    fi
+
+    local support="$HOME/Library/Application Support"
+    if [ -d "$support/$LEGACY_BUNDLE_ID" ] && [ ! -d "$support/$BUNDLE_ID" ]; then
+        echo "==> Copying Application Support from $LEGACY_BUNDLE_ID"
+        ditto "$support/$LEGACY_BUNDLE_ID" "$support/$BUNDLE_ID"
+    fi
 }
 
 install_staged() {
@@ -167,6 +189,8 @@ install_staged() {
         echo "error: nothing staged at $STAGED. Run with --build-only first." >&2
         exit 1
     fi
+
+    migrate_legacy_state
 
     echo "==> Installing to $TARGET"
     for app in ${installs[@]+"${installs[@]}"}; do
@@ -197,6 +221,9 @@ case "$MODE" in
         refuse_if_running
         install_staged
         echo "==> Opening $TARGET"
-        open "$TARGET"
+        # The app inherits this environment, and its terminals inherit the app's. The
+        # overrides the updater passes in must not reach them, or a plain fork/install.sh
+        # run from one of those terminals would pick them up.
+        env -u APP_NAME -u BUNDLE_ID -u DEST -u SIGN_IDENTITY open "$TARGET"
         ;;
 esac

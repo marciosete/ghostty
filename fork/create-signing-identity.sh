@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Creates a self-signed code signing identity in the login keychain for
-# install-ghostty-pro.sh to sign with.
+# install.sh to sign with.
 #
 # macOS remembers privacy answers (Photos, Documents, ...) per app signature. An
 # ad hoc signature changes with every build, so each reinstall asked again. A
@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-IDENTITY="${IDENTITY:-Ghostty Pro Local Signing}"
+IDENTITY="${IDENTITY:-Maggie Local Signing}"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
 # LibreSSL, not Homebrew's OpenSSL 3: its .p12 encryption is what `security
@@ -50,4 +50,4 @@ echo "==> Importing into the login keychain"
 # -T lets codesign use the key without asking each time.
 security import "$WORK/identity.p12" -k "$KEYCHAIN" -P import -T /usr/bin/codesign >/dev/null
 
-echo "==> Done. install-ghostty-pro.sh now signs with \"$IDENTITY\"."
+echo "==> Done. install.sh now signs with \"$IDENTITY\"."

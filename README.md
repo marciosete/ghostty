@@ -1,226 +1,157 @@
-<!-- LOGO -->
 <h1>
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/fe853809-ba8b-400b-83ab-a9a0da25be8a" alt="Logo" width="128">
-  <br>Ghostty
+  <img src="fork/icon/Maggie.png" alt="Maggie" width="128">
+  <br>Maggie
 </h1>
   <p align="center">
-    Fast, native, feature-rich terminal emulator pushing modern features.
+    A macOS terminal for a flock of Claude Code sessions. Built on Ghostty.
     <br />
-    A native GUI or embeddable library via <code>libghostty</code>.
-    <br />
-    <a href="#about">About</a>
+    <a href="#what-it-does">What it does</a>
     ·
-    <a href="https://ghostty.org/download">Download</a>
+    <a href="#install">Install</a>
     ·
-    <a href="https://ghostty.org/docs">Documentation</a>
+    <a href="#how-it-works">How it works</a>
     ·
-    <a href="CONTRIBUTING.md">Contributing</a>
+    <a href="#ghostty">Ghostty</a>
     ·
-    <a href="HACKING.md">Developing</a>
+    <a href="#why-maggie">Why Maggie</a>
   </p>
 </p>
 
-## About
+Maggie is [Ghostty](https://ghostty.org) with a sidebar that knows what every
+[Claude Code](https://claude.com/product/claude-code) session in it is doing.
+Run a dozen sessions across worktrees, see at a glance which ones are working,
+which are waiting on you and which are done, and watch the cost and the token
+rate as they go. It is a real terminal underneath: Ghostty's renderer, Ghostty's
+config, Ghostty's shell integration.
 
-Ghostty is a terminal emulator that differentiates itself by being
-fast, feature-rich, and native. While there are many excellent terminal
-emulators available, they all force you to choose between speed,
-features, or native UIs. Ghostty provides all three.
+Maggie is macOS only. It is an independent project and is not affiliated with
+Ghostty or Anthropic.
 
-**`libghostty`** is a cross-platform, zero-dependency C and Zig library
-for building terminal emulators or utilizing terminal functionality
-(such as style parsing). Anyone can use `libghostty` to build a terminal
-emulator or embed a terminal into their own applications. See
-[Ghostling](https://github.com/ghostty-org/ghostling) for a minimal complete project
-example or the [`examples` directory](https://github.com/ghostty-org/ghostty/tree/main/example)
-for smaller examples of using `libghostty` in C and Zig.
+## What it does
 
-For more details, see [About Ghostty](https://ghostty.org/docs/about).
+**A sidebar of sessions.** Tabs are vertical, named, grouped and searchable. A
+session's tab takes the colour of what its Claude Code is doing:
 
-## Download
+| Colour | Meaning                                                              |
+| ------ | -------------------------------------------------------------------- |
+| blue   | working on a request                                                 |
+| red    | needs you: a permission, a question or a dialog                      |
+| yellow | finished, with edits that aren't committed yet                       |
+| teal   | committed in its worktree, not yet landed on the main checkout       |
+| none   | finished, everything committed and landed                            |
 
-See the [download page](https://ghostty.org/download) on the Ghostty website.
+Pick **Auto** to follow Claude Code, **Attention** to only light up when a
+session needs you, or any fixed colour. Hover a session for its models, tokens
+and cost; an extended row shows its project and what it is doing; a speaker on
+the tab reads its last reply aloud.
 
-## Documentation
+**A workspace that comes back.** Quit and reopen, and every window, tab, split
+and Claude Code session is restored where it was, resumed with `claude --resume`.
+New tabs open in their group's folder.
 
-See the [documentation](https://ghostty.org/docs) on the Ghostty website.
+**Worktrees and source control.** A session started with `claude -w` runs in
+its own worktree. Maggie follows it: the source control panel shows that
+worktree's branch, changes and commits ahead of `main`, and an Auto tab counts
+what is left to commit and lands the worktree when it is clean.
 
-## Contributing and Developing
+**Usage.** A panel with the cost and tokens of every Claude Code session, by
+day, project and model, priced at current rates, with your plan's limits
+alongside. A custom range for the accountant.
 
-If you have any ideas, issues, etc. regarding Ghostty, or would like to
-contribute to Ghostty through pull requests, please check out our
-["Contributing to Ghostty"](CONTRIBUTING.md) document. Those who would like
-to get involved with Ghostty's development as well should also read the
-["Developing Ghostty"](HACKING.md) document for more technical details.
+**Reply timing in the titlebar.** The time to first token and the tokens per
+second of the reply streaming in the current tab, live.
 
-## Roadmap and Status
+**Capture.** Turn it on, and the requests Claude Code sends to the model, system
+prompt and all, are saved per session, exactly as the API receives them.
 
-Ghostty is stable and in use by millions of people and machines daily.
+**Keep the Mac awake** from the sidebar, lid closed included, while the flock
+works.
 
-The high-level ambitious plan for the project, in order:
+Everything Ghostty does still works, and Maggie reads your existing
+`~/.config/ghostty/config`.
 
-|  #  | Step                                                    | Status |
-| :-: | ------------------------------------------------------- | :----: |
-|  1  | Standards-compliant terminal emulation                  |   ✅   |
-|  2  | Competitive performance                                 |   ✅   |
-|  3  | Rich windowing features -- multi-window, tabbing, panes |   ✅   |
-|  4  | Native Platform Experiences                             |   ✅   |
-|  5  | Cross-platform `libghostty` for Embeddable Terminals    |   ✅   |
-|  6  | Ghostty-only Terminal Control Sequences                 |   ❌   |
+## Install
 
-Additional details for each step in the big roadmap below:
+Maggie installs next to the official Ghostty, under its own name and bundle
+ID, with its own preferences and Dock entry. It never updates from Ghostty's
+feed.
 
-#### Standards-Compliant Terminal Emulation
+### From source
 
-Ghostty implements all of the regularly used control sequences and
-can run every mainstream terminal program without issue. For legacy sequences,
-we've done a [comprehensive xterm audit](https://github.com/ghostty-org/ghostty/issues/632)
-comparing Ghostty's behavior to xterm and building a set of conformance
-test cases.
+You need [Zig 0.16](https://ziglang.org/download/), Xcode 26 or newer and
+[Claude Code](https://claude.com/product/claude-code). Optionally
+[SwiftLint](https://github.com/realm/SwiftLint), which the build runs if it is
+installed, and Python 3 with Pillow to regenerate the icon.
 
-In addition to legacy sequences (what you'd call real "terminal" emulation),
-Ghostty also supports more modern sequences than almost any other terminal
-emulator. These features include things like the Kitty graphics protocol,
-Kitty image protocol, clipboard sequences, synchronized rendering,
-light/dark mode notifications, and many, many more.
-
-We believe Ghostty is one of the most compliant and feature-rich terminal
-emulators available.
-
-Terminal behavior is partially a de jure standard
-(i.e. [ECMA-48](https://ecma-international.org/publications-and-standards/standards/ecma-48/))
-but mostly a de facto standard as defined by popular terminal emulators
-worldwide. Ghostty takes the approach that our behavior is defined by
-(1) standards, if available, (2) xterm, if the feature exists, (3)
-other popular terminals, in that order. This defines what the Ghostty project
-views as a "standard."
-
-#### Competitive Performance
-
-Ghostty is generally in the same performance category as the other highest
-performing terminal emulators.
-
-"The same performance category" means that Ghostty is much faster than
-traditional or "slow" terminals and is within an unnoticeable margin of the
-well-known "fast" terminals. For example, Ghostty and Alacritty are usually within
-a few percentage points of each other on various benchmarks, but are both
-something like 100x faster than Terminal.app and iTerm. However, Ghostty
-is much more feature rich than Alacritty and has a much more native app
-experience.
-
-This performance is achieved through high-level architectural decisions and
-low-level optimizations. At a high-level, Ghostty has a multi-threaded
-architecture with a dedicated read thread, write thread, and render thread
-per terminal. Our renderer uses OpenGL on Linux and Metal on macOS.
-Our read thread has a heavily optimized terminal parser that leverages
-CPU-specific SIMD instructions. Etc.
-
-#### Rich Windowing Features
-
-The Mac and Linux (build with GTK) apps support multi-window, tabbing, and
-splits with additional features such as tab renaming, coloring, etc. These
-features allow for a higher degree of organization and customization than
-single-window terminals.
-
-#### Native Platform Experiences
-
-Ghostty is a cross-platform terminal emulator but we don't aim for a
-least-common-denominator experience. There is a large, shared core written
-in Zig but we do a lot of platform-native things:
-
-- The macOS app is a true SwiftUI-based application with all the things you
-  would expect such as real windowing, menu bars, a settings GUI, etc.
-- macOS uses a true Metal renderer with CoreText for font discovery.
-- macOS supports AppleScript, Apple Shortcuts (AppIntents), etc.
-- The Linux app is built with GTK.
-- The Linux app integrates deeply with systemd if available for things
-  like always-on, new windows in a single instance, cgroup isolation, etc.
-
-Our goal with Ghostty is for users of whatever platform they run Ghostty
-on to think that Ghostty was built for their platform first and maybe even
-exclusively. We want Ghostty to feel like a native app on every platform,
-for the best definition of "native" on each platform.
-
-#### Cross-platform `libghostty` for Embeddable Terminals
-
-In addition to being a standalone terminal emulator, Ghostty is a
-C-compatible library for embedding a fast, feature-rich terminal emulator
-in any 3rd party project. This library is called `libghostty`.
-
-Due to the scope of this project, we're breaking libghostty down into
-separate libraries, starting with `libghostty-vt`. The goal of
-this project is to focus on parsing terminal sequences and maintaining
-terminal state. This is covered in more detail in this
-[blog post](https://mitchellh.com/writing/libghostty-is-coming).
-
-`libghostty-vt` is already available and usable today for Zig and C and
-is compatible for macOS, Linux, Windows, and WebAssembly. The functionality
-is extremely stable (since its been proven in Ghostty GUI for a long time),
-but the API signatures are still in flux.
-
-`libghostty` is already heavily in use. See [`examples`](https://github.com/ghostty-org/ghostty/tree/main/example)
-for small examples of using `libghostty` in C and Zig or the
-[Ghostling](https://github.com/ghostty-org/ghostling) project for a
-complete example. See [awesome-libghostty](https://github.com/Uzaaft/awesome-libghostty)
-for a list of projects and resources related to `libghostty`.
-
-We haven't tagged libghostty with a version yet and we're still working
-on a better docs experience, but our [Doxygen website](https://libghostty.tip.ghostty.org/)
-is a good resource for the C API.
-
-#### Ghostty-only Terminal Control Sequences
-
-We want and believe that terminal applications can and should be able
-to do so much more. We've worked hard to support a wide variety of modern
-sequences created by other terminal emulators towards this end, but we also
-want to fill the gaps by creating our own sequences.
-
-We've been hesitant to do this up until now because we don't want to create
-more fragmentation in the terminal ecosystem by creating sequences that only
-work in Ghostty. But, we do want to balance that with the desire to push the
-terminal forward with stagnant standards and the slow pace of change in the
-terminal ecosystem.
-
-We haven't done any of this yet.
-
-## Crash Reports
-
-Ghostty has a built-in crash reporter that will generate and save crash
-reports to disk. The crash reports are saved to the `$XDG_STATE_HOME/ghostty/crash`
-directory. If `$XDG_STATE_HOME` is not set, the default is `~/.local/state`.
-**Crash reports are _not_ automatically sent anywhere off your machine.**
-
-Crash reports are only generated the next time Ghostty is started after a
-crash. If Ghostty crashes and you want to generate a crash report, you must
-restart Ghostty at least once. You should see a message in the log that a
-crash report was generated.
-
-> [!NOTE]
->
-> Use the `ghostty +crash-report` CLI command to get a list of available crash
-> reports. A future version of Ghostty will make the contents of the crash
-> reports more easily viewable through the CLI and GUI.
-
-Crash reports end in the `.ghosttycrash` extension. The crash reports are in
-[Sentry envelope format](https://develop.sentry.dev/sdk/envelopes/). You can
-upload these to your own Sentry account to view their contents, but the format
-is also publicly documented so any other available tools can also be used.
-The `ghostty +crash-report` CLI command can be used to list any crash reports.
-A future version of Ghostty will show you the contents of the crash report
-directly in the terminal.
-
-To send the crash report to the Ghostty project, you can use the following
-CLI command using the [Sentry CLI](https://docs.sentry.io/cli/installation/):
-
-```shell-session
-SENTRY_DSN=https://e914ee84fd895c4fe324afa3e53dac76@o4507352570920960.ingest.us.sentry.io/4507850923638784 sentry-cli send-envelope --raw <path to ghostty crash>
+```sh
+git clone https://github.com/marciosete/maggie.git
+cd maggie
+fork/create-signing-identity.sh   # once per Mac; see below
+fork/install.sh
 ```
 
-> [!WARNING]
->
-> The crash report can contain sensitive information. The report doesn't
-> purposely contain sensitive information, but it does contain the full
-> stack memory of each thread at the time of the crash. This information
-> is used to rebuild the stack trace but can also contain sensitive data
-> depending on when the crash occurred.
+`fork/install.sh` builds a release app and installs it to `/Applications/Maggie.app`.
+Override `DEST` to install elsewhere (`DEST=~/Applications fork/install.sh`).
+
+`fork/create-signing-identity.sh` creates a local certificate to sign the app
+with. macOS remembers privacy answers (Photos, Documents, …) per signature, so
+without it every reinstall asks again. Skip it and the app is signed ad hoc.
+
+### Updating
+
+**Maggie › Update Maggie…** builds the latest version from the checkout it was
+installed from, restarts, and brings every window, tab and session back. It
+runs `fork/install.sh --build-only` while you keep working, then
+`--install-staged` after Maggie quits.
+
+### Signed releases
+
+Notarized builds, a Homebrew cask and in-app updates from Maggie's own feed are
+on the way. Until then, build from source.
+
+## How it works
+
+Maggie finds the Claude Code running in each terminal from Claude Code's own
+session registry and reads the session's transcript. There are no hooks to
+install and nothing to add to your Claude Code settings.
+
+The usage panel is computed from those transcripts, and the plan limits from
+what `claude` itself reports.
+
+For the reply timing, new terminals get `ANTHROPIC_BASE_URL` pointed at a local
+proxy that passes every request through to Anthropic untouched and watches the
+stream go by. It can be turned off from the menu; terminals opened while it is
+off talk to Anthropic directly. Capture uses the same kind of proxy and is off
+until you turn it on.
+
+Session state is kept in Maggie's own preferences, under its bundle ID, never
+in Ghostty's.
+
+## Ghostty
+
+Maggie is a fork of [Ghostty](https://github.com/ghostty-org/ghostty) by
+Mitchell Hashimoto and the Ghostty contributors. It shares Ghostty's terminal
+core, renderer, fonts, input handling, config and shell integration; the
+sidebar, workspace, source control, usage, streaming and capture features are
+Maggie's. The GTK app for Linux is unchanged upstream code and is not built or
+tested here.
+
+Upstream changes are merged in after each Ghostty release. Ghostty's own
+documentation at [ghostty.org/docs](https://ghostty.org/docs) applies to
+everything Maggie inherits, and [HACKING.md](HACKING.md) to building it.
+
+Ghostty is a trademark of its owners. Maggie uses its own name and icon, and
+describes itself as built on Ghostty. See [NOTICE.md](NOTICE.md).
+
+## Why Maggie
+
+Australians call the Australian magpie a maggie. It sings one of the most
+complex songs of any bird, remembers faces, and in spring it swoops anyone who
+comes too close to the nest. A red tab in the sidebar is a maggie swooping.
+
+## License
+
+MIT, the same as Ghostty. Copyright © 2024 Mitchell Hashimoto, Ghostty
+contributors; changes in this fork © 2026 Marcio Sete, released under the same
+license. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

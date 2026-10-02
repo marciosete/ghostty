@@ -96,7 +96,7 @@ private struct CaffeinePopover: View {
             .keyboardShortcut(.defaultAction)
         }
 
-        Text("The first time, macOS asks for your password to allow staying awake with the lid closed. It turns off when Ghostty Pro quits.")
+        Text("The first time, macOS asks for your password to allow staying awake with the lid closed. It turns off when Maggie quits.")
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)

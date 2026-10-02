@@ -250,7 +250,7 @@ class AppDelegate: NSObject,
         } else {
             menuCheckForUpdates?.isHidden = true
             if let menu = menuCheckForUpdates?.menu {
-                GhosttyProUpdater.shared.installMenuItem(in: menu, after: menuCheckForUpdates)
+                MaggieUpdater.shared.installMenuItem(in: menu, after: menuCheckForUpdates)
             }
         }
 
