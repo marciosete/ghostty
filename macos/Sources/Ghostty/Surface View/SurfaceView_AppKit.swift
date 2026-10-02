@@ -395,6 +395,8 @@ extension Ghostty {
             // its replies, behind the capture proxy while requests are captured.
             surface_cfg.environmentVariables.merge(SystemPromptCapture.shared.environment) { current, _ in current }
             ClaudeStreams.shared.addEnvironment(to: &surface_cfg)
+            // A new session starts Claude Code; a restored one resumes its own.
+            ClaudeCodeStart.shared.apply(to: &surface_cfg)
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }

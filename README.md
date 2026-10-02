@@ -30,6 +30,14 @@ Ghostty or Anthropic.
 
 ## What it does
 
+**A new session is a Claude Code session.** Open a tab, split or window and
+Claude Code starts in it. In a git repository it gets its own worktree
+(`claude -w`), so what it changes is its own, and a session opened from a
+worktree starts from the main checkout, so two never share one. `/exit` drops
+to the shell and the tab stays. Turn it off under **View › Start Claude Code
+in New Sessions**; a shell startup file that starts Claude Code itself can
+check `MAGGIE_CLAUDE_CODE_START`, set in these terminals, and stand down.
+
 **A sidebar of sessions.** Tabs are vertical, named, grouped and searchable. A
 session's tab takes the colour of what its Claude Code is doing:
 
