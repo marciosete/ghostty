@@ -107,7 +107,7 @@ class BaseTerminalController: NSWindowController,
     }
 
     /// The last computed title from the focused surface (without the override).
-    private var lastComputedTitle: String = "👻"
+    private var lastComputedTitle: String = Maggie.placeholderTitle
 
     /// The status Claude Code puts in front of the focused surface's title, if it runs there.
     private var lastClaudeCodeStatus: String?
@@ -951,13 +951,13 @@ class BaseTerminalController: NSWindowController,
         } else {
             // There is no surface to listen to titles for.
             lastClaudeCodeStatus = nil
-            titleDidChange(to: Maggie.isMaggie ? Maggie.appName : "👻")
+            titleDidChange(to: Maggie.placeholderTitle)
         }
     }
 
     private func computeTitle(title: String, bell: Bool) -> String {
-        // Maggie's name stands in for a title the terminal hasn't set yet.
-        var result = title.isEmpty && Maggie.isMaggie ? Maggie.appName : title
+        // Maggie's magpie stands in for a title the terminal hasn't set yet.
+        var result = title.isEmpty && Maggie.isMaggie ? Maggie.placeholderTitle : title
         if bell && ghostty.config.bellFeatures.contains(.title) {
             result = "🔔 \(result)"
         }
