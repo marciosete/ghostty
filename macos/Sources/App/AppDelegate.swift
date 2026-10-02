@@ -240,8 +240,17 @@ class AppDelegate: NSObject,
         installTabSidebarMenuItems()
         installSettingsMenuItem()
 
-        // Keep the open windows and tabs saved so they can be opened again.
+        // Keep the open windows and tabs saved so they can be opened again, and offer the
+        // kept versions in the File menu, after the close items.
         TerminalWorkspace.shared.start(ghostty)
+        if let closeAll = menuCloseAllWindows, let menu = closeAll.menu {
+            let item = NSMenuItem(
+                title: "Reopen Sessions from Backup…",
+                action: #selector(reopenSessionsFromBackup(_:)),
+                keyEquivalent: "")
+            item.target = self
+            menu.insertItem(item, at: menu.index(of: closeAll) + 1)
+        }
 
         // Start our update checker. Ghostty and Maggie each update from their own feed
         // (see UpdateDelegate); a build under any other bundle ID has no feed, since
@@ -1024,6 +1033,10 @@ class AppDelegate: NSObject,
     @IBAction func closeAllWindows(_ sender: Any?) {
         TerminalController.closeAllWindows()
         AboutController.shared.hide()
+    }
+
+    @objc func reopenSessionsFromBackup(_ sender: Any?) {
+        TerminalWorkspaceHistoryPanel.shared.show()
     }
 
     @IBAction func showAbout(_ sender: Any?) {

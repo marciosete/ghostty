@@ -1989,8 +1989,9 @@ extension Ghostty {
         }
 
         /// The agent session to resume when the surface opens again. An agent leads its
-        /// own process group and stays in the foreground while it works.
-        private func agentSessionToSave() -> AgentSession? {
+        /// own process group and stays in the foreground while it works. The workspace
+        /// also reads it to tell whether a saved tab is open.
+        func agentSessionToSave() -> AgentSession? {
             if let pid = surfaceModel?.foregroundPID,
                let session = AgentSession.running(pid: pid) {
                 restoredAgentSession = nil

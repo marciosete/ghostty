@@ -704,9 +704,15 @@ class BaseTerminalController: NSWindowController,
     @objc private func ghosttyDidCloseSurface(_ notification: Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
         guard let node = surfaceTree.root?.node(view: target) else { return }
-        closeSurface(
-            node,
-            withConfirmation: (notification.userInfo?["process_alive"] as? Bool) ?? false)
+        let processAlive = (notification.userInfo?["process_alive"] as? Bool) ?? false
+
+        // A whole tab closing because its process ended on its own is counted: many at
+        // once were killed from outside, and the workspace shouldn't follow them.
+        if !processAlive, surfaceTree.root == node, self is TerminalController {
+            TerminalWorkspace.shared.tabWillCloseBecauseProcessEnded()
+        }
+
+        closeSurface(node, withConfirmation: processAlive)
     }
 
     @objc private func ghosttyDidNewSplit(_ notification: Notification) {

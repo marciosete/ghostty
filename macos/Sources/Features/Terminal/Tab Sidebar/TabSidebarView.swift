@@ -96,6 +96,8 @@ struct TabSidebarView: View {
                 .padding(.horizontal, 8)
                 .padding(.bottom, 4)
 
+            TabSidebarLostSessionsBanner()
+
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: TabSidebarStyle.rowSpacing(settings.rowStyle)) {
                     if model.isSearching && model.shownRows.isEmpty {
@@ -196,6 +198,43 @@ struct TabSidebarView: View {
                     }
                     .onEnded { _ in resizeStartWidth = nil }
             )
+    }
+}
+
+// MARK: - Lost Sessions
+
+/// Sessions whose processes ended together, as when they are killed from outside the app,
+/// with the choice to reopen them where they were or let them go. They stay in the saved
+/// workspace until one is picked, so nothing is lost by leaving it.
+private struct TabSidebarLostSessionsBanner: View {
+    @ObservedObject private var workspace = TerminalWorkspace.shared
+
+    var body: some View {
+        if let loss = workspace.pendingLoss {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("\(loss.count) sessions closed at once")
+                        .font(TabSidebarStyle.titleFont.weight(.semibold))
+                }
+                Text("Their processes ended together, as when they are killed from outside. They stay saved until you choose.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button("Reopen") { workspace.reopenLostSessions() }
+                        .buttonStyle(.borderedProminent)
+                    Button("Keep Closed") { workspace.dismissLostSessions() }
+                }
+                .controlSize(.small)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.14)))
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+        }
     }
 }
 
