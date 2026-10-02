@@ -173,8 +173,19 @@ jobs:
           mkdir -p dist dmg
           ditto -c -k --keepParent build/Maggie.app dist/Maggie-macos-universal.zip
           ditto build/Maggie.app dmg/Maggie.app
-          ln -s /Applications dmg/Applications
-          hdiutil create -volname Maggie -srcfolder dmg -ov -format UDZO Maggie.dmg
+          # The drag-to-Applications window: fork/dmg/background.tiff draws the arrow
+          # between these two positions (see fork/dmg/background.py).
+          brew install --quiet create-dmg
+          create-dmg \
+            --volname Maggie \
+            --volicon build/Maggie.app/Contents/Resources/Maggie.icns \
+            --background fork/dmg/background.tiff \
+            --window-pos 200 120 --window-size 660 400 \
+            --icon-size 128 \
+            --icon Maggie.app 180 170 --hide-extension Maggie.app \
+            --app-drop-link 480 170 \
+            --no-internet-enable \
+            Maggie.dmg dmg
           [ -z "$MACOS_CERTIFICATE_NAME" ] || codesign --force --sign "$MACOS_CERTIFICATE_NAME" --timestamp Maggie.dmg
 
       - name: Notarize DMG
