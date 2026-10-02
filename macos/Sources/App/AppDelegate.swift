@@ -255,6 +255,16 @@ class AppDelegate: NSObject,
             MaggieUpdater.shared.installMenuItem(in: menu, after: menuCheckForUpdates)
         }
 
+        // Maggie's name in every menu, and Ghostty's docs kept next to Maggie's help.
+        if Maggie.isMaggie, let mainMenu = NSApp.mainMenu {
+            Maggie.brand(menu: mainMenu)
+            if let help = Maggie.item(withAction: #selector(showHelp(_:)), in: mainMenu), let menu = help.menu {
+                let docs = NSMenuItem(title: "Ghostty Documentation", action: #selector(showGhosttyDocs(_:)), keyEquivalent: "")
+                docs.target = self
+                menu.insertItem(docs, at: menu.index(of: help) + 1)
+            }
+        }
+
         // Register our service provider. This must happen after everything is initialized.
         NSApp.servicesProvider = ServiceProvider()
 
@@ -1020,7 +1030,14 @@ class AppDelegate: NSObject,
     }
 
     @IBAction func showHelp(_ sender: Any) {
-        guard let url = URL(string: "https://ghostty.org/docs") else { return }
+        // Maggie's help is its README; Ghostty's docs are the next item in the menu.
+        let docs = Maggie.isMaggie ? Maggie.repositoryURL : Maggie.ghosttyDocsURL
+        guard let url = URL(string: docs) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc func showGhosttyDocs(_ sender: Any) {
+        guard let url = URL(string: Maggie.ghosttyDocsURL) else { return }
         NSWorkspace.shared.open(url)
     }
 

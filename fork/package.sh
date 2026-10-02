@@ -53,6 +53,10 @@ echo "==> Renaming to $APP_NAME ($BUNDLE_ID)"
     -c "Set :CFBundleDisplayName $APP_NAME" \
     "$PLIST"
 
+# Shown in About.
+"$PLISTBUDDY" -c "Delete :NSHumanReadableCopyright" "$PLIST" 2>/dev/null || true
+"$PLISTBUDDY" -c "Add :NSHumanReadableCopyright string © 2026 Marcio Sete. Built on Ghostty, © Mitchell Hashimoto and the Ghostty contributors. MIT License." "$PLIST"
+
 [ -z "$VERSION" ] || "$PLISTBUDDY" -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
 [ -z "$BUILD" ] || "$PLISTBUDDY" -c "Set :CFBundleVersion $BUILD" "$PLIST"
 [ -z "$COMMIT" ] || "$PLISTBUDDY" -c "Set :GhosttyCommit $COMMIT" "$PLIST"

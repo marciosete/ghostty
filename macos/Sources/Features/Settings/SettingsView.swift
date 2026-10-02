@@ -13,8 +13,8 @@ struct SettingsView: View {
 
             VStack(alignment: .leading) {
                 Text("Coming Soon. 🚧").font(.title)
-                Text("You can't configure settings in the GUI yet. To modify settings, " +
-                     "edit the file at $HOME/.config/ghostty/config.ghostty and restart Ghostty.")
+                Text(Maggie.branded("You can't configure settings in the GUI yet. To modify settings, " +
+                     "edit the file at $HOME/.config/ghostty/config.ghostty and restart Ghostty."))
                 .multilineTextAlignment(.leading)
                 .lineLimit(nil)
             }

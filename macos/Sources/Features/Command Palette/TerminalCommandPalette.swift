@@ -96,7 +96,7 @@ struct TerminalCommandPaletteView: View {
             // convey it'll go all the way through.
             let title: String
             if case .updateAvailable = updateViewModel.state {
-                title = "Update Ghostty and Restart"
+                title = Maggie.branded("Update Ghostty and Restart")
             } else {
                 title = updateViewModel.text
             }

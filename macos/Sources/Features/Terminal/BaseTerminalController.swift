@@ -945,12 +945,13 @@ class BaseTerminalController: NSWindowController,
         } else {
             // There is no surface to listen to titles for.
             lastClaudeCodeStatus = nil
-            titleDidChange(to: "👻")
+            titleDidChange(to: Maggie.isMaggie ? Maggie.appName : "👻")
         }
     }
 
     private func computeTitle(title: String, bell: Bool) -> String {
-        var result = title
+        // Maggie's name stands in for a title the terminal hasn't set yet.
+        var result = title.isEmpty && Maggie.isMaggie ? Maggie.appName : title
         if bell && ghostty.config.bellFeatures.contains(.title) {
             result = "🔔 \(result)"
         }
@@ -1206,6 +1207,9 @@ class BaseTerminalController: NSWindowController,
 
         // Everything beyond here is setting up the window
         guard let window else { return }
+
+        // The nib's title is Ghostty's; it shows until the terminal sets one.
+        window.title = Maggie.branded(window.title)
 
         // We always initialize our fullscreen style to native if we can because
         // initialization sets up some state (i.e. observers). If its set already

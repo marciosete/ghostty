@@ -3,8 +3,14 @@ import SwiftUI
 struct AboutView: View {
     @Environment(\.openURL) var openURL
 
-    private let githubURL = URL(string: "https://github.com/ghostty-org/ghostty")
-    private let docsURL = URL(string: "https://ghostty.org/docs")
+    // Maggie's About is about Maggie: its own icon, name, repository and version, with
+    // Ghostty credited. Everything else here is Ghostty's.
+    private var githubURL: URL? {
+        URL(string: Maggie.isMaggie ? Maggie.repositoryURL : "https://github.com/ghostty-org/ghostty")
+    }
+    private var docsURL: URL? {
+        URL(string: Maggie.isMaggie ? Maggie.releasesURL : Maggie.ghosttyDocsURL)
+    }
 
     /// Read the commit from the bundle.
     private var build: String? { Bundle.main.infoDictionary?["CFBundleVersion"] as? String }
@@ -74,14 +80,24 @@ struct AboutView: View {
 
     var body: some View {
         VStack(alignment: .center) {
-            CyclingIconView()
+            if Maggie.isMaggie {
+                Image("AppIconImage")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 128)
+                    .accessibilityLabel("\(Maggie.appName) Application Icon")
+            } else {
+                CyclingIconView()
+            }
 
             VStack(alignment: .center, spacing: 32) {
                 VStack(alignment: .center, spacing: 8) {
-                    Text("Ghostty")
+                    Text(Maggie.isMaggie ? Maggie.appName : "Ghostty")
                         .bold()
                         .font(.title)
-                    Text("Fast, native, feature-rich terminal \nemulator pushing modern features.")
+                    Text(Maggie.isMaggie
+                         ? "A terminal for a flock of Claude Code sessions.\nBuilt on Ghostty."
+                         : "Fast, native, feature-rich terminal \nemulator pushing modern features.")
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                         .font(.caption)
@@ -92,6 +108,9 @@ struct AboutView: View {
 
                 VStack(spacing: 2) {
                     switch versionConfig {
+                    case .stable(let version) where Maggie.isMaggie:
+                        PropertyRow(label: "Version", text: version,
+                                    url: URL(string: "\(Maggie.releasesURL)/tag/v\(version)"))
                     case .stable(let version):
                         PropertyRow(label: "Version", text: version, url: versionConfig.url)
                     case .tip:
@@ -113,12 +132,17 @@ struct AboutView: View {
 
                 HStack(spacing: 8) {
                     if let url = docsURL {
-                        Button("Docs") {
+                        Button(Maggie.isMaggie ? "Releases" : "Docs") {
                             openURL(url)
                         }
                     }
                     if let url = githubURL {
                         Button("GitHub") {
+                            openURL(url)
+                        }
+                    }
+                    if Maggie.isMaggie, let url = URL(string: Maggie.ghosttyDocsURL) {
+                        Button("Ghostty Docs") {
                             openURL(url)
                         }
                     }
