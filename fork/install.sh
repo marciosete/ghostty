@@ -210,9 +210,13 @@ case "$MODE" in
         refuse_if_running
         install_staged
         echo "==> Opening $TARGET"
-        # The app inherits this environment, and its terminals inherit the app's. The
-        # overrides the updater passes in must not reach them, or a plain fork/install.sh
-        # run from one of those terminals would pick them up.
-        env -u APP_NAME -u BUNDLE_ID -u DEST -u SIGN_IDENTITY open "$TARGET"
+        # The app inherits this environment, and every terminal it opens inherits the
+        # app's. Run from a terminal, this script carries that terminal's Claude Code
+        # session, its resume marker and the overrides the updater passes in; none of
+        # it may reach the app, or every new tab would look like a restored session.
+        # So the app starts from a clean environment, as it would from the Dock.
+        env -i HOME="$HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" SHELL="${SHELL:-/bin/zsh}" \
+            PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR="${TMPDIR:-/tmp}" \
+            open "$TARGET"
         ;;
 esac
