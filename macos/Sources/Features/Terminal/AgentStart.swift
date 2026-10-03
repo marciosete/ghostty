@@ -4,8 +4,10 @@ import Foundation
 
 /// Starts the chosen coding agent, Claude Code or Codex, in every new terminal, so a new
 /// session is an agent session without a shell startup file arranging it. The command is
-/// typed into the shell once it is up, the way a restored session's resume command is, so
-/// `/exit` drops back to the shell and the terminal stays.
+/// typed into the shell at its first prompt, the way a restored session's resume command
+/// is, so `/exit` drops back to the shell and the terminal stays. A startup file that
+/// starts an agent itself never sees the command: the core holds it for the prompt and
+/// drops it when the prompt is late (see `input` in `Config.zig`).
 ///
 /// In a git repository each session gets its own worktree (`claude -w`, `codex
 /// --worktree`), so what it changes is its own and the sidebar can show and land it. A

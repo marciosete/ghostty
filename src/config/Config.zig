@@ -1308,6 +1308,15 @@ env: RepeatableStringMap = .{},
 /// then the data specified as this input will be written to the pty
 /// before any other input can be provided.
 ///
+/// When the command is a shell with Ghostty's shell integration, the
+/// input is written when the shell shows its first prompt rather than
+/// the moment it starts, so a shell startup file that runs a program
+/// first doesn't hand the input to that program. If the first prompt
+/// takes longer than 15 seconds to appear, the input is dropped: the
+/// shell was doing something else, and typing into it then would be a
+/// surprise. A command without shell integration gets the input right
+/// away.
+///
 /// The bytes are sent as-is with no additional encoding. Therefore, be
 /// cautious about input that can contain control characters, because this
 /// can be used to execute programs in a shell.

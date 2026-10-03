@@ -57,7 +57,7 @@ final class TabSidebarSettings: ObservableObject {
         let defaults = UserDefaults.ghostty
         isEnabled = defaults.object(forKey: Self.enabledKey) as? Bool ?? true
         isCollapsed = defaults.bool(forKey: Self.collapsedKey)
-        rowStyle = defaults.string(forKey: Self.rowStyleKey).flatMap(RowStyle.init(rawValue:)) ?? .simple
+        rowStyle = defaults.string(forKey: Self.rowStyleKey).flatMap(RowStyle.init(rawValue:)) ?? .extended
 
         let storedWidth = defaults.double(forKey: Self.widthKey)
         width = storedWidth > 0

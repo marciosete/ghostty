@@ -89,6 +89,10 @@ pub const StreamHandler = struct {
     /// this to determine if we need to default the window title.
     seen_title: bool = false,
 
+    /// This is set to true when we've seen a prompt begin (OSC 133 A).
+    /// The first one tells termio the shell is ready for initial input.
+    seen_prompt: bool = false,
+
     pub const Stream = terminal.Stream(StreamHandler);
 
     /// True if we have tmux control mode built in.
@@ -1444,13 +1448,20 @@ pub const StreamHandler = struct {
                 self.surfaceMessageWriter(.{ .stop_command = code });
             },
 
+            // A prompt begins ('A', the mark shells send, or its 'N' and
+            // 'P' variants). The first tells termio the shell is ready.
+            .fresh_line_new_prompt,
+            .new_command,
+            .prompt_start,
+            => if (!self.seen_prompt) {
+                self.seen_prompt = true;
+                self.messageWriter(.shell_prompt);
+            },
+
             // Handled by Terminal, no special handling by us
             .end_prompt_start_input,
             .end_prompt_start_input_terminate_eol,
             .fresh_line,
-            .fresh_line_new_prompt,
-            .new_command,
-            .prompt_start,
             => {},
         }
 

@@ -346,6 +346,7 @@ fn drainMailbox(
             },
             .start_synchronized_output => self.startSynchronizedOutput(cb),
             .linefeed_mode => |v| self.flags.linefeed_mode = v,
+            .shell_prompt => try io.shellPrompt(data),
             .focused => |v| try io.focusGained(data, v),
             .write_small => |v| try io.queueWrite(
                 data,

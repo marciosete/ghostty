@@ -109,13 +109,13 @@ struct ClaudeCodeLightTests {
     }
 
     // One test, since it changes a setting the others would race on.
-    @Test func followingIsAttentionUntilPickedForEveryTab() {
+    @Test func followingIsAutoUntilPickedForEveryTab() {
         let key = "TabColorFollowing"
         let saved = UserDefaults.ghostty.object(forKey: key)
         defer { UserDefaults.ghostty.set(saved, forKey: key) }
 
         UserDefaults.ghostty.removeObject(forKey: key)
-        #expect(TerminalTabColor.following == .attention)
+        #expect(TerminalTabColor.following == .auto)
 
         TerminalTabColor.following = .attention
         #expect(TerminalTabColor.auto.resolvingFollowing == .attention)

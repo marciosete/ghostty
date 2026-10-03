@@ -592,6 +592,10 @@ const Subprocess = struct {
     pty: ?Pty = null,
     process: ?Process = null,
 
+    /// Whether shell integration was injected into the command, so the
+    /// shell will mark its prompts (OSC 133).
+    shell_integrated: bool,
+
     rt_pre_exec_info: Command.RtPreExecInfo,
     rt_post_fork_info: Command.RtPostForkInfo,
 
@@ -756,6 +760,7 @@ const Subprocess = struct {
         _ = env.orderedRemove("VTE_VERSION");
 
         // Setup our shell integration, if we can.
+        var shell_integrated = false;
         const shell_command: configpkg.Command = shell: {
             const default_shell_command: configpkg.Command =
                 cfg.command orelse .{ .shell = switch (builtin.os.tag) {
@@ -809,6 +814,7 @@ const Subprocess = struct {
                 .{integration.shell},
             );
 
+            shell_integrated = true;
             break :shell integration.command;
         };
 
@@ -868,6 +874,7 @@ const Subprocess = struct {
             .env = env,
             .cwd = cwd,
             .args = args,
+            .shell_integrated = shell_integrated,
 
             .rt_pre_exec_info = cfg.rt_pre_exec_info,
             .rt_post_fork_info = cfg.rt_post_fork_info,
@@ -2057,6 +2064,12 @@ fn appendEnvAlways(
 /// not available on a particular platform.
 pub fn getProcessInfo(self: *Exec, comptime info: ProcessInfo) ?ProcessInfo.Type(info) {
     return self.subprocess.getProcessInfo(info);
+}
+
+/// Whether the command runs a shell with our shell integration injected,
+/// which marks its prompts (OSC 133).
+pub fn shellIntegrated(self: *const Exec) bool {
+    return self.subprocess.shell_integrated;
 }
 
 test "execCommand darwin: shell command" {

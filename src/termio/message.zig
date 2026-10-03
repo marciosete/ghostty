@@ -79,6 +79,10 @@ pub const Message = union(enum) {
     /// Enable or disable linefeed mode (mode 20).
     linefeed_mode: bool,
 
+    /// The shell marked its first prompt (OSC 133 A), so it is ready for
+    /// the initial input. Sent once.
+    shell_prompt: void,
+
     /// The surface gained or lost focus.
     focused: bool,
 

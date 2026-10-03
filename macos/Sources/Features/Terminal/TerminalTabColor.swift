@@ -39,12 +39,11 @@ enum TerminalTabColor: Int, CaseIterable, Codable {
     /// `attention`. Picking one for a tab picks it for all of them, and new tabs start
     /// with it. Tabs given a color by hand keep theirs.
     ///
-    /// Until one is picked it is `attention`, which leaves a sidebar of finished sessions
-    /// plain and fills only the ones that need something.
+    /// Until one is picked it is `auto`, which shows every session's state at a glance.
     static var following: TerminalTabColor {
         get {
             let saved = UserDefaults.ghostty.object(forKey: followingKey) as? Int
-            return saved.flatMap(TerminalTabColor.init(rawValue:)).flatMap { $0.followsClaudeCode ? $0 : nil } ?? .attention
+            return saved.flatMap(TerminalTabColor.init(rawValue:)).flatMap { $0.followsClaudeCode ? $0 : nil } ?? .auto
         }
         set {
             guard newValue.followsClaudeCode else { return }

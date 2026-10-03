@@ -110,6 +110,14 @@ pub const Backend = union(Kind) {
             .exec => |*exec| exec.getProcessInfo(info),
         };
     }
+
+    /// Whether the backend runs a shell with shell integration injected,
+    /// so it will mark its prompts (OSC 133).
+    pub fn shellIntegrated(self: *const Backend) bool {
+        return switch (self.*) {
+            .exec => |*exec| exec.shellIntegrated(),
+        };
+    }
 };
 
 /// Termio thread data. See termio.ThreadData for docs.

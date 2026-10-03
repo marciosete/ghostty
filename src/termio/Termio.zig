@@ -73,6 +73,21 @@ last_cursor_reset: ?std.Io.Timestamp = null,
 /// to keep track of any state or if its already been freed.
 thread_enter_state: ?*ThreadEnterState = null,
 
+/// Initial input held back until the shell marks its first prompt, which
+/// a shell with our integration does (OSC 133). Written to the pty at that
+/// prompt if it comes within `pending_input_grace`, and dropped otherwise:
+/// a prompt that late means something else took the terminal first, such
+/// as a program a startup file runs, and the input would have gone to it.
+pending_input: ?[]u8 = null,
+
+/// When the subprocess started, for the pending input's grace period.
+pending_input_start: std.Io.Timestamp = undefined,
+
+/// How long after the subprocess starts its first prompt still gets the
+/// pending input. Generous for a slow shell startup, short for a program
+/// a startup file runs in the shell's place.
+const pending_input_grace_ns: i64 = 15 * std.time.ns_per_s;
+
 /// The state we need to keep around only until we enter the IO
 /// thread. Then we can throw it all away.
 const ThreadEnterState = struct {
@@ -342,6 +357,7 @@ pub fn deinit(self: *Termio) void {
 
     // Clear any initial state if we have it
     if (self.thread_enter_state) |v| v.destroy();
+    self.dropPendingInput();
 }
 
 pub fn threadEnter(
@@ -379,9 +395,11 @@ pub fn threadEnter(
     try self.backend.threadEnter(self.alloc, self, data);
     errdefer self.backend.threadExit(data);
 
-    // If we have inputs, then queue them all up.
+    // If we have inputs, then gather them all up.
+    var pending: std.ArrayList(u8) = .empty;
+    defer pending.deinit(self.alloc);
     for (inputs orelse &.{}) |input| switch (input) {
-        .string => |v| self.queueWrite(data, v, false) catch |err| {
+        .string => |v| pending.appendSlice(self.alloc, v) catch |err| {
             log.warn("failed to queue input string err={}", .{err});
             return error.InputFailed;
         },
@@ -396,16 +414,60 @@ pub fn threadEnter(
             };
             defer self.alloc.free(contents);
 
-            self.queueWrite(data, contents, false) catch |err| {
+            pending.appendSlice(self.alloc, contents) catch |err| {
                 log.warn("failed to queue input file err={}", .{err});
                 return error.InputFailed;
             };
         },
     };
+    if (pending.items.len == 0) return;
+
+    // A shell with our integration marks its prompt, so the input waits
+    // for it: typed any earlier, a startup file that runs a program in
+    // the shell's place would hand the input to that program. A command
+    // without the integration never marks a prompt, so it gets the input
+    // right away as before.
+    if (self.backend.shellIntegrated()) {
+        self.pending_input = pending.toOwnedSlice(self.alloc) catch |err| {
+            log.warn("failed to hold input for the prompt err={}", .{err});
+            return error.InputFailed;
+        };
+        self.pending_input_start = .now(global.io(), .awake);
+        return;
+    }
+
+    self.queueWrite(data, pending.items, false) catch |err| {
+        log.warn("failed to queue input err={}", .{err});
+        return error.InputFailed;
+    };
 }
 
 pub fn threadExit(self: *Termio, data: *ThreadData) void {
+    self.dropPendingInput();
     self.backend.threadExit(data);
+}
+
+/// The shell marked its first prompt: type the pending input if the
+/// prompt is on time, drop it either way.
+pub fn shellPrompt(self: *Termio, td: *ThreadData) !void {
+    const input = self.pending_input orelse return;
+    defer self.dropPendingInput();
+
+    const now: std.Io.Timestamp = .now(global.io(), .awake);
+    const elapsed = self.pending_input_start.durationTo(now).toNanoseconds();
+    if (elapsed > pending_input_grace_ns) {
+        log.info("first prompt after {d}s, dropping initial input", .{
+            @divTrunc(elapsed, std.time.ns_per_s),
+        });
+        return;
+    }
+
+    try self.queueWrite(td, input, false);
+}
+
+fn dropPendingInput(self: *Termio) void {
+    if (self.pending_input) |v| self.alloc.free(v);
+    self.pending_input = null;
 }
 
 /// Send a message to the mailbox. Depending on the mailbox type in use
