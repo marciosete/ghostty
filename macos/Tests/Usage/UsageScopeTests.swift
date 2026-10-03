@@ -60,4 +60,30 @@ struct UsageScopeTests {
         let path = "/Users/me/.grok/sessions/-Users-me-projects-KIT/updates.jsonl"
         #expect(!work.includes(path: path, in: "/Users/me/.grok/sessions", provider: .grok))
     }
+
+    @Test func codexUsesItsRecordedDirectory() {
+        let work = UsageScopeFilter(scope: .work, workFolders: ["/Users/me/projects/KIT"])
+        let projects = UsageScopeFilter(scope: .projects, workFolders: ["/Users/me/projects/KIT"])
+        let root = "/Users/me/.codex/sessions"
+        let path = root + "/2026/10/03/rollout.jsonl"
+        #expect(work.includes(path: path, in: root, provider: .codex, directory: "/Users/me/projects/KIT/project"))
+        #expect(!projects.includes(path: path, in: root, provider: .codex, directory: "/Users/me/projects/KIT/project"))
+        #expect(!work.includes(path: path, in: root, provider: .codex, directory: "/Users/me/projects/KITCHEN"))
+        #expect(projects.includes(path: path, in: root, provider: .codex))
+    }
+
+    @Test func resolvesAManagedWorktreeToItsSourceCheckout() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("usage-worktree-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = root.appendingPathComponent("work/project")
+        let git = repository.appendingPathComponent(".git/worktrees/topic")
+        let worktree = root.appendingPathComponent("codex/worktrees/topic")
+        try FileManager.default.createDirectory(at: git, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: worktree.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try "gitdir: \(git.path)\n".write(to: worktree.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+        try "../..\n".write(to: git.appendingPathComponent("commondir"), atomically: true, encoding: .utf8)
+
+        #expect(UsageScopeFilter.projectDirectory(for: worktree.appendingPathComponent("src").path) == repository.path)
+        #expect(UsageScopeFilter.projectDirectory(for: repository.path) == repository.path)
+    }
 }

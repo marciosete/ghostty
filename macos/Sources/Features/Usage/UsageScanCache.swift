@@ -35,7 +35,8 @@ enum UsageScanCache {
     /// Version 2 added one hour cache writes. An older cache is dropped and every
     /// transcript read again, so cache writes are priced by the cache they went to.
     /// Version 3 dropped the `<synthetic>` messages Claude Code writes itself.
-    private static let version = 3
+    /// Version 4 reads Codex's response records and retains directories for scope filtering.
+    private static let version = 4
 
     /// Keeps only the first record of each key, within one file. Callers stitching a
     /// resumed parse together pass one `seen` set across its parts.
@@ -72,6 +73,7 @@ enum UsageScanCache {
                 record.dedupeKey ?? NSNull(),
                 record.reportedCostUsd ?? NSNull(),
                 record.totals.cacheCreation1h,
+                record.directory ?? NSNull(),
             ]
         }
 
@@ -103,7 +105,8 @@ enum UsageScanCache {
     /// full scan, never wrong totals.
     static func decode(_ data: Data) -> [String: UsageCachedTranscript] {
         guard let document = UsageJSON.object(data),
-              document["version"] as? Int == version,
+              let storedVersion = document["version"] as? Int,
+              storedVersion == version || storedVersion == 3,
               let models = document["models"] as? [String],
               let sessions = document["sessions"] as? [String],
               let files = document["files"] as? [String: Any] else { return [:] }
@@ -115,7 +118,7 @@ enum UsageScanCache {
             var records: [UsageRecord] = []
             records.reserveCapacity(rows.count)
             for row in rows {
-                guard row.count == 11,
+                guard row.count == (storedVersion == 3 ? 11 : 12),
                       let timestampMs = row[0] as? Int,
                       let modelIndex = row[1] as? Int, models.indices.contains(modelIndex),
                       let sessionIndex = row[2] as? Int, sessions.indices.contains(sessionIndex),
@@ -138,7 +141,8 @@ enum UsageScanCache {
                         output: output,
                         reasoning: reasoning),
                     reportedCostUsd: UsageJSON.number(row[9]),
-                    dedupeKey: row[8] as? String))
+                    dedupeKey: row[8] as? String,
+                    directory: storedVersion == 3 ? nil : row[11] as? String))
             }
             return records
         }
@@ -156,7 +160,10 @@ enum UsageScanCache {
                   let tailRecords = decodeRecords(file["t"], provider) else { continue }
 
             cache[path] = UsageCachedTranscript(
-                size: size,
+                // Keep old records for deleted transcripts. A live Codex file must
+                // be parsed again for canonical response counts and directories,
+                // even when its size and modification time haven't changed.
+                size: storedVersion == 3 && provider == .codex ? -1 : size,
                 mtimeNs: mtimeNs,
                 provider: provider,
                 records: records,

@@ -209,7 +209,8 @@ private final class LineParser {
         case .codex:
             // The header and each turn's context are needed too, for the session and model.
             guard Self.contains(line, "\"token_count\"") || Self.contains(line, "\"session_meta\"")
-                || Self.contains(line, "\"turn_context\"") else { return }
+                || Self.contains(line, "\"turn_context\"") || Self.contains(line, "\"token_usage_record\"")
+                || Self.contains(line, "\"thread_settings_applied\"") else { return }
             if let record = UsageTranscripts.parseCodexLine(Self.data(line), state: &codexState) {
                 records.append(record)
             }

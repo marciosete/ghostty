@@ -65,6 +65,10 @@ struct UsageRecord: Equatable {
     /// The key records are de-duplicated by across files, or nil when the record is
     /// unique by nature.
     var dedupeKey: String?
+
+    /// The working directory recorded by the agent, retained for scope filtering even
+    /// after a transcript or worktree has been deleted.
+    var directory: String?
 }
 
 /// Parsers for single lines of the coding agents' JSONL transcripts. None of them touch
@@ -130,6 +134,8 @@ enum UsageTranscripts {
     struct CodexScanState {
         var model = ""
         var sessionId = ""
+        var directory: String?
+        var sawTokenUsageRecord = false
 
         /// The last usage event, to drop the copies Codex writes of it.
         var lastUsageSignature: String?
@@ -165,6 +171,7 @@ enum UsageTranscripts {
             if let id = (payload["id"] ?? payload["session_id"]) as? String {
                 state.sessionId = id
             }
+            state.directory = payload["cwd"] as? String
             if let timestampMs = UsageTimestamp.milliseconds(record["timestamp"]), isForkedSessionMeta(payload) {
                 state.suppressingForkCopies = true
                 state.forkCopyAnchorMs = timestampMs
@@ -175,13 +182,43 @@ enum UsageTranscripts {
             if let model = payload["model"] as? String, !model.isEmpty {
                 state.model = model
             }
+            if let directory = payload["cwd"] as? String { state.directory = directory }
             return nil
+
+        case "token_usage_record":
+            // Modern Codex persists the provider's per-response counts as well as
+            // token_count notifications. The response id identifies copies exactly,
+            // and the owner thread keeps a fork's inherited history out of its cost.
+            // Inherited records also suppress their accompanying notifications.
+            state.sawTokenUsageRecord = true
+            guard let owner = payload["thread_id"] as? String,
+                  owner == state.sessionId,
+                  let response = payload["response_id"] as? String, !response.isEmpty,
+                  let usage = payload["usage"] as? [String: Any],
+                  let timestampMs = UsageTimestamp.milliseconds(record["timestamp"]),
+                  !state.model.isEmpty else { return nil }
+            state.suppressingForkCopies = false
+            let totals = codexTotals(usage)
+            guard totals.total > 0 else { return nil }
+            return UsageRecord(
+                provider: .codex, timestampMs: timestampMs, model: state.model,
+                sessionId: state.sessionId, totals: totals, reportedCostUsd: nil,
+                dedupeKey: "codex:\(owner):\(response)", directory: state.directory)
 
         default:
             break
         }
 
-        guard payload["type"] as? String == "token_count",
+        guard record["type"] as? String == "event_msg" else { return nil }
+        if payload["type"] as? String == "thread_settings_applied" {
+            guard payload["thread_id"] == nil || payload["thread_id"] as? String == state.sessionId,
+                  let settings = payload["thread_settings"] as? [String: Any] else { return nil }
+            if let model = settings["model"] as? String, !model.isEmpty { state.model = model }
+            if let directory = settings["cwd"] as? String { state.directory = directory }
+            return nil
+        }
+        guard !state.sawTokenUsageRecord,
+              payload["type"] as? String == "token_count",
               let info = payload["info"] as? [String: Any],
               let last = info["last_token_usage"] as? [String: Any],
               let timestampMs = UsageTimestamp.milliseconds(record["timestamp"]),
@@ -191,7 +228,11 @@ enum UsageTranscripts {
               !state.model.isEmpty else { return nil }
 
         // Codex writes an unchanged token_count again on some stream boundaries.
-        let signature = last.keys.sorted().map { "\($0)=\(UsageJSON.count(last[$0]))" }.joined(separator: ",")
+        // Two real responses can use exactly the same number of tokens. Their
+        // cumulative usage differs, while a repeated notification keeps both equal.
+        let signature = UsageJSON.signature([
+            "last": last, "total": info["total_token_usage"] ?? NSNull(),
+        ])
         guard signature != state.lastUsageSignature else { return nil }
         state.lastUsageSignature = signature
 
@@ -203,18 +244,7 @@ enum UsageTranscripts {
             state.suppressingForkCopies = false
         }
 
-        let input = UsageJSON.count(last["input_tokens"])
-        let cachedInput = UsageJSON.count(last["cached_input_tokens"])
-        let cacheCreation = UsageJSON.count(last["cache_write_input_tokens"])
-        let output = UsageJSON.count(last["output_tokens"])
-        let totals = UsageTokenTotals(
-            // Codex reports input_tokens including the cached part.
-            uncachedInput: max(0, input - cachedInput - cacheCreation),
-            cachedInput: cachedInput,
-            cacheCreation: cacheCreation,
-            output: output,
-            // Reported inside output_tokens, shown apart in the token mix.
-            reasoning: min(output, UsageJSON.count(last["reasoning_output_tokens"])))
+        let totals = codexTotals(last)
         guard totals.total > 0 else { return nil }
 
         return UsageRecord(
@@ -226,7 +256,20 @@ enum UsageTranscripts {
             // Codex doesn't report cost in the rollout.
             reportedCostUsd: nil,
             // Events that survive the fork-copy suppression are unique to this rollout.
-            dedupeKey: nil)
+            dedupeKey: nil,
+            directory: state.directory)
+    }
+
+    private static func codexTotals(_ usage: [String: Any]) -> UsageTokenTotals {
+        let input = UsageJSON.count(usage["input_tokens"])
+        let cachedInput = UsageJSON.count(usage["cached_input_tokens"])
+        let cacheCreation = UsageJSON.count(usage["cache_write_input_tokens"])
+        let output = UsageJSON.count(usage["output_tokens"])
+        return UsageTokenTotals(
+            // Input includes cached tokens; reasoning is already included in output.
+            uncachedInput: max(0, input - cachedInput - cacheCreation),
+            cachedInput: cachedInput, cacheCreation: cacheCreation, output: output,
+            reasoning: min(output, UsageJSON.count(usage["reasoning_output_tokens"])))
     }
 
     /// Whether a `session_meta` payload marks the rollout as a fork or a subagent.

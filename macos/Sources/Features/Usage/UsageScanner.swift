@@ -187,8 +187,10 @@ final class UsageScanner {
             }
 
             var sessions: Set<String> = []
-            for file in files where filter.includes(path: file.path, in: source.directory, provider: source.provider) {
-                for record in file.records {
+            for file in files {
+                for record in file.records where filter.includes(
+                    path: file.path, in: source.directory, provider: source.provider, directory: record.directory
+                ) {
                     // Only sessions with usage in the window count. The modification
                     // time slack lets in files whose records fall outside it.
                     if aggregator.add(record), !record.sessionId.isEmpty {
@@ -235,8 +237,19 @@ final class UsageScanner {
         // aggregator still de-duplicates across files.
         var seen: Set<String> = []
         let base = parsed.resumed ? cached?.records ?? [] : []
-        let records = UsageScanCache.dedupeWithinFile(base + parsed.records, seen: &seen)
-        let tailRecords = UsageScanCache.dedupeWithinFile(parsed.tailRecords, seen: &seen)
+        var directories: [String: String] = [:]
+        func scoped(_ records: [UsageRecord]) -> [UsageRecord] {
+            records.map { record in
+                guard record.provider == .codex, let directory = record.directory else { return record }
+                let project = directories[directory] ?? UsageScopeFilter.projectDirectory(for: directory)
+                directories[directory] = project
+                var record = record
+                record.directory = project
+                return record
+            }
+        }
+        let records = UsageScanCache.dedupeWithinFile(base + scoped(parsed.records), seen: &seen)
+        let tailRecords = UsageScanCache.dedupeWithinFile(scoped(parsed.tailRecords), seen: &seen)
 
         let entry = UsageCachedTranscript(
             size: file.size,

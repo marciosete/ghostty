@@ -25,23 +25,61 @@ enum UsageScope: String, CaseIterable {
 /// deleted but whose usage is still cached. Sessions in a repository's worktrees
 /// (`.claude/worktrees/…`) are below the repository, so they count with it.
 ///
-/// Grok's sessions don't say which folder they ran in, so they count as projects.
+/// Codex records its working directory in the transcript. Linked worktrees are matched
+/// to their source checkout. Grok's sessions have no directory and count as projects.
 struct UsageScopeFilter: Equatable {
     let scope: UsageScope
 
     /// Claude Code's folder names of the work folders.
     private let workFolderNames: [String]
+    private let workDirectories: [String]
 
     init(scope: UsageScope, workFolders: [String]) {
         self.scope = scope
         workFolderNames = workFolders.map(Self.claudeFolderName(of:)).filter { $0.count > 1 }
+        workDirectories = workFolders.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
     }
 
     /// Whether the usage in the transcript at `path`, found under `sourceDirectory`, counts.
-    func includes(path: String, in sourceDirectory: String, provider: UsageProvider) -> Bool {
+    func includes(path: String, in sourceDirectory: String, provider: UsageProvider, directory: String? = nil) -> Bool {
         guard scope != .all else { return true }
-        let isWork = provider == .claude && isWorkTranscript(path: path, in: sourceDirectory)
+        let isWork: Bool
+        switch provider {
+        case .claude: isWork = isWorkTranscript(path: path, in: sourceDirectory)
+        case .codex:
+            isWork = directory.map { directory in
+                workDirectories.contains { directory == $0 || directory.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") }
+            } ?? false
+        case .grok: isWork = false
+        }
         return scope == .work ? isWork : !isWork
+    }
+
+    /// Codex's managed worktrees live outside the source repository. Resolve their
+    /// gitdir/commondir pointers while the checkout exists, then cache this directory
+    /// with the usage so deleting the worktree doesn't change the report's scope.
+    static func projectDirectory(for directory: String) -> String {
+        let original = URL(fileURLWithPath: directory, isDirectory: true).standardizedFileURL
+        var current = original
+        while current.path != "/" {
+            let marker = current.appendingPathComponent(".git")
+            if let data = try? Data(contentsOf: marker), data.count < 65_536,
+               let text = String(data: data, encoding: .utf8), text.hasPrefix("gitdir: ") {
+                let gitPath = String(text.dropFirst(8)).trimmingCharacters(in: .whitespacesAndNewlines)
+                let git = URL(fileURLWithPath: gitPath, isDirectory: true, relativeTo: current).standardizedFileURL
+                if let commonText = try? String(contentsOf: git.appendingPathComponent("commondir"), encoding: .utf8) {
+                    let common = commonText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !common.isEmpty else { break }
+                    return URL(fileURLWithPath: common, isDirectory: true, relativeTo: git)
+                        .standardizedFileURL.deletingLastPathComponent().path
+                }
+                break
+            }
+            let parent = current.deletingLastPathComponent()
+            if parent == current { break }
+            current = parent
+        }
+        return original.path
     }
 
     private func isWorkTranscript(path: String, in sourceDirectory: String) -> Bool {

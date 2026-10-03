@@ -165,11 +165,11 @@ struct UsageCodexParserTests {
         try! JSONSerialization.data(withJSONObject: ["timestamp": timestamp, "type": type, "payload": payload]) // swiftlint:disable:this force_try
     }
 
-    private func tokenCount(input: Int, cached: Int = 0, output: Int, reasoning: Int = 0, at timestamp: String = "2026-09-17T21:58:09.000Z") -> Data {
+    private func tokenCount(input: Int, cached: Int = 0, output: Int, reasoning: Int = 0, totalInput: Int = 0, at timestamp: String = "2026-09-17T21:58:09.000Z") -> Data {
         line("event_msg", [
             "type": "token_count",
             "info": [
-                "total_token_usage": ["input_tokens": 0, "output_tokens": 0],
+                "total_token_usage": ["input_tokens": totalInput, "output_tokens": 0],
                 "last_token_usage": [
                     "input_tokens": input,
                     "cached_input_tokens": cached,
@@ -206,6 +206,95 @@ struct UsageCodexParserTests {
         #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10), state: &state) != nil)
         #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10), state: &state) == nil)
         #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 11), state: &state) != nil)
+    }
+
+    @Test func identicalRealResponsesAreNotDropped() {
+        var state = UsageTranscripts.CodexScanState()
+        _ = UsageTranscripts.parseCodexLine(line("turn_context", ["model": "gpt-5-codex"]), state: &state)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10, totalInput: 100), state: &state) != nil)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10, totalInput: 200), state: &state) != nil)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10, totalInput: 200), state: &state) == nil)
+    }
+
+    private func responseUsage(owner: String = "thread-1", response: String = "response-1") -> Data {
+        line("token_usage_record", [
+            "thread_id": owner, "response_id": response,
+            "usage": ["input_tokens": 100, "cached_input_tokens": 60, "output_tokens": 10, "reasoning_output_tokens": 4],
+        ])
+    }
+
+    @Test func responseRecordsOwnTheUsageAndSuppressNotificationCopies() throws {
+        var state = UsageTranscripts.CodexScanState()
+        _ = UsageTranscripts.parseCodexLine(line("session_meta", meta), state: &state)
+        _ = UsageTranscripts.parseCodexLine(line("event_msg", [
+            "type": "thread_settings_applied", "thread_id": "thread-1",
+            "thread_settings": ["model": "gpt-5-codex", "cwd": "/work/project"],
+        ]), state: &state)
+
+        #expect(UsageTranscripts.parseCodexLine(responseUsage(owner: "parent"), state: &state) == nil)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10), state: &state) == nil)
+        let record = try #require(UsageTranscripts.parseCodexLine(responseUsage(), state: &state))
+        #expect(record.model == "gpt-5-codex")
+        #expect(record.directory == "/work/project")
+        #expect(record.totals == UsageTokenTotals(uncachedInput: 40, cachedInput: 60, output: 10, reasoning: 4))
+        #expect(record.dedupeKey == "codex:thread-1:response-1")
+        #expect(record.reportedCostUsd == nil)
+        #expect(UsageTranscripts.parseCodexLine(tokenCount(input: 100, output: 10), state: &state) == nil)
+
+        let copy = try #require(UsageTranscripts.parseCodexLine(responseUsage(), state: &state))
+        let next = try #require(UsageTranscripts.parseCodexLine(responseUsage(response: "response-2"), state: &state))
+        var seen: Set<String> = []
+        #expect(UsageScanCache.dedupeWithinFile([record, copy, next], seen: &seen).count == 2)
+    }
+
+    @Test func copiedThreadSettingsDoNotChangeTheCurrentModel() {
+        var state = UsageTranscripts.CodexScanState()
+        _ = UsageTranscripts.parseCodexLine(line("session_meta", meta), state: &state)
+        _ = UsageTranscripts.parseCodexLine(line("turn_context", ["model": "gpt-5-codex"]), state: &state)
+        _ = UsageTranscripts.parseCodexLine(line("event_msg", [
+            "type": "thread_settings_applied", "thread_id": "parent",
+            "thread_settings": ["model": "another-model"],
+        ]), state: &state)
+        #expect(UsageTranscripts.parseCodexLine(responseUsage(), state: &state)?.model == "gpt-5-codex")
+    }
+
+    @Test func canonicalUsageAndDirectorySurviveReadingAndCaching() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("codex-record-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var data = Data()
+        for part in [
+            line("session_meta", meta), line("turn_context", ["model": "gpt-5-codex"]),
+            responseUsage(), tokenCount(input: 100, output: 10), responseUsage(response: "response-2"),
+        ] {
+            data.append(part)
+            data.append(UInt8(ascii: "\n"))
+        }
+        try data.write(to: url)
+        let parsed = try #require(UsageTranscriptReader.read(path: url.path, provider: .codex))
+        #expect(parsed.records.count == 2)
+        #expect(parsed.records.allSatisfy { $0.directory == "/Users/me/project" })
+        let entry = UsageCachedTranscript(size: data.count, mtimeNs: 1, provider: .codex,
+                                         records: parsed.records, tailRecords: [], position: parsed.position)
+        let encoded = try #require(UsageScanCache.encode([url.path: entry]))
+        #expect(UsageScanCache.decode(encoded)[url.path] == entry)
+    }
+
+    @Test func upgradingTheCachePreservesDeletedTranscriptUsage() throws {
+        let row: [Any] = [1_789_682_289_000, 0, 0, 40, 60, 0, 10, 4, NSNull(), NSNull(), 0]
+        func file(_ provider: String) -> [String: Any] {
+            ["s": 500, "m": 1, "p": provider, "r": [row], "t": [], "o": 500, "gl": 0, "gh": 0]
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "version": 3, "models": ["gpt-5-codex"], "sessions": ["thread-1"],
+            "files": ["/deleted/codex.jsonl": file("codex"), "/deleted/claude.jsonl": file("claude")],
+        ])
+        let cache = UsageScanCache.decode(data)
+        #expect(cache.count == 2)
+        #expect(cache["/deleted/codex.jsonl"]?.records.first?.totals.total == 110)
+        #expect(cache["/deleted/codex.jsonl"]?.size == -1)
+        #expect(cache["/deleted/claude.jsonl"]?.size == 500)
+        let saved = try #require(UsageScanCache.encode(cache))
+        #expect(UsageScanCache.decode(saved) == cache)
     }
 
     @Test func aForkSkipsTheCopiedHistory() {
