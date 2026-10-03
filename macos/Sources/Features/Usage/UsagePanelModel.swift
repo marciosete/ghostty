@@ -99,6 +99,9 @@ final class UsagePanelModel: ObservableObject {
     /// The plan limits of the Claude Code CLI, or nil until they're first read.
     @Published private(set) var limits: ClaudeLimits?
 
+    /// Codex's own subscription windows, read without starting a model turn.
+    @Published private(set) var codexLimits: CodexLimits?
+
     @Published private(set) var isScanning = false
 
     @Published var breakdown: Breakdown = .model
@@ -118,8 +121,10 @@ final class UsagePanelModel: ObservableObject {
     private static let limitsRefreshInterval: TimeInterval = 5 * 60
 
     private let limitsQueue = DispatchQueue(label: "com.mitchellh.ghostty.usage-limits", qos: .userInitiated)
+    private let codexLimitsQueue = DispatchQueue(label: "com.mitchellh.ghostty.usage-codex-limits", qos: .userInitiated)
     private var limitsTimer: Timer?
     private var isReadingLimits = false
+    private var pendingLimitReads = 0
 
     init(scanner: UsageScanner = .shared, settings: UsageSettings = .shared) {
         self.scanner = scanner
@@ -165,15 +170,28 @@ final class UsagePanelModel: ObservableObject {
         }
         guard !isReadingLimits else { return }
 
+        // Each CLI is asked on its own, so neither waits for the other to answer.
         isReadingLimits = true
+        pendingLimitReads = 2
         limitsQueue.async { [weak self] in
             let limits = ClaudeLimitsReader.read()
             DispatchQueue.main.async {
-                guard let self else { return }
-                self.limits = limits
-                self.isReadingLimits = false
+                self?.limits = limits
+                self?.finishedReadingLimits()
             }
         }
+        codexLimitsQueue.async { [weak self] in
+            let limits = CodexLimitsReader.read()
+            DispatchQueue.main.async {
+                self?.codexLimits = limits
+                self?.finishedReadingLimits()
+            }
+        }
+    }
+
+    private func finishedReadingLimits() {
+        pendingLimitReads -= 1
+        if pendingLimitReads <= 0 { isReadingLimits = false }
     }
 
     private func startLimitsTimer() {

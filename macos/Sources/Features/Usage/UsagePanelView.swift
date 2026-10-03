@@ -223,9 +223,12 @@ struct UsagePanelView: View {
         if let summary = model.summary {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
-                    // Nothing to say when Claude Code isn't installed.
+                    // Only show providers whose CLI is installed.
                     if let limits = model.limits, limits.unavailable != .cliMissing {
                         planLimits(limits)
+                    }
+                    if let limits = model.codexLimits, limits.unavailable != .cliMissing {
+                        codexPlanLimits(limits)
                     }
 
                     if summary.activeProviders.isEmpty {
@@ -312,22 +315,68 @@ struct UsagePanelView: View {
     }
 
     private func planLimitRow(_ window: ClaudeLimitWindow) -> some View {
+        planLimitRow(label: window.label, usedPercent: window.usedPercent, resetsAt: window.resetsAt, color: window.barColor)
+    }
+
+    private func codexPlanLimits(_ limits: CodexLimits) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                UsageProviderMark(provider: .codex)
+                    .frame(width: 13, height: 13)
+                Text(limits.accountLabel ?? "Codex")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let plan = limits.planLabel {
+                    Text(plan).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+            }
+            .font(.system(size: 12))
+            .help("Codex plan limits · Checked \(relative(limits.checkedAt))")
+
+            if limits.windows.isEmpty {
+                Text(codexLimitsUnavailableNote(limits))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 11) {
+                    ForEach(limits.windows) { window in
+                        planLimitRow(
+                            label: window.label, usedPercent: window.usedPercent, resetsAt: window.resetsAt,
+                            color: window.usedPercent >= 90 ? .orange : .accentColor)
+                    }
+                }
+            }
+        }
+    }
+
+    private func codexLimitsUnavailableNote(_ limits: CodexLimits) -> String {
+        switch limits.unavailable {
+        case .signedOut: "Not signed in. Run codex login to see plan limits."
+        case .noPlanLimits: "This login reports no subscription limits. API keys and other providers use their own billing."
+        case .failed: "Codex didn't report plan limits."
+        case .cliMissing, .none: ""
+        }
+    }
+
+    private func planLimitRow(label: String, usedPercent: Double, resetsAt: Date?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(window.label)
+                Text(label)
                     .font(.system(size: 12))
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                Text("\(Int(window.usedPercent.rounded()))% used")
+                Text("\(Int(usedPercent.rounded()))% used")
                     .font(.system(size: 11))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .fixedSize()
             }
 
-            UsageLimitBar(fraction: window.usedPercent / 100, color: window.barColor)
+            UsageLimitBar(fraction: usedPercent / 100, color: color)
 
-            if let resetsAt = window.resetsAt {
+            if let resetsAt {
                 Text(UsageFormat.reset(resetsAt))
                     .font(.system(size: 10.5))
                     .foregroundStyle(.tertiary)
