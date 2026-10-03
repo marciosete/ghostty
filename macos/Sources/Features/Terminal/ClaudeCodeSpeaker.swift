@@ -3,7 +3,7 @@ import AVFoundation
 import Foundation
 import OSLog
 
-/// The last response of a Claude Code session, read from its transcript.
+/// The last response of a coding agent's session, read from its transcript.
 enum ClaudeCodeResponse {
     /// How much of the end of a transcript is read. The last response is near the end, and a
     /// transcript can be many megabytes.
@@ -14,9 +14,18 @@ enum ClaudeCodeResponse {
     /// last message is further back leaves the model unknown.
     private static let modelTailSize: UInt64 = 1 << 20
 
-    /// The text of the last response in the transcript at `url`.
-    static func last(inTranscript url: URL) -> String? {
-        tailLines(ofTranscript: url, size: tailSize).flatMap(last(inLines:))
+    /// The text of the last response from a running session.
+    static func last(inSession session: AgentSession) -> String? {
+        session.transcript.flatMap { last(inTranscript: $0, of: session.agent) }
+    }
+
+    /// The text of the last response in the transcript at `url`, as `agent` wrote it.
+    static func last(inTranscript url: URL, of agent: CodingAgent = .claude) -> String? {
+        guard let lines = tailLines(ofTranscript: url, size: tailSize) else { return nil }
+        switch agent {
+        case .claude: return last(inLines: lines)
+        case .codex: return last(inCodexLines: lines)
+        }
     }
 
     /// The model that wrote the last response in the transcript at `url`, which is the
@@ -92,6 +101,42 @@ enum ClaudeCodeResponse {
         return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
 
+    /// Codex records each assistant message in a response item and repeats it in events.
+    /// Reading backwards takes the latest text once, without joining those copies or
+    /// including earlier progress updates, tool output, or reasoning.
+    static func last(inCodexLines lines: [Data]) -> String? {
+        for line in lines.reversed() {
+            guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let payload = entry["payload"] as? [String: Any] else { continue }
+
+            let text: String?
+            switch entry["type"] as? String {
+            case "response_item":
+                guard payload["type"] as? String == "message",
+                      payload["role"] as? String == "assistant",
+                      let content = payload["content"] as? [[String: Any]] else { continue }
+                text = content.compactMap { block -> String? in
+                    guard block["type"] as? String == "output_text",
+                          let text = block["text"] as? String,
+                          !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                    return text
+                }.joined(separator: "\n\n")
+            case "event_msg":
+                switch payload["type"] as? String {
+                case "agent_message": text = payload["message"] as? String
+                case "task_complete": text = payload["last_agent_message"] as? String
+                default: continue
+                }
+            default:
+                continue
+            }
+            if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return text
+            }
+        }
+        return nil
+    }
+
     /// Markdown as it should be read aloud: without code blocks, table rules, link targets
     /// or the characters that mark formatting.
     static func spoken(fromMarkdown markdown: String) -> String {
@@ -139,7 +184,7 @@ enum ClaudeCodeResponse {
     }
 }
 
-/// Reads the last response of a tab's Claude Code session aloud, when asked. One tab speaks
+/// Reads the last response of a tab's coding agent session aloud, when asked. One tab speaks
 /// at a time: asking another stops the first, and asking the one speaking stops it.
 ///
 /// The response is spoken by ElevenLabs when an API key is set up (see `ElevenLabs`),
@@ -228,8 +273,8 @@ final class ClaudeCodeSpeaker: NSObject {
     private func read(pids: [Int]) async {
         let found = await Task.detached(priority: .userInitiated) { () -> (text: String, apiKey: String?)? in
             let text = pids.lazy
-                .compactMap { ClaudeCodeSession.running(pid: $0)?.transcript }
-                .compactMap { ClaudeCodeResponse.last(inTranscript: $0) }
+                .compactMap { AgentSession.running(pid: $0) }
+                .compactMap { ClaudeCodeResponse.last(inSession: $0) }
                 .map { ClaudeCodeResponse.spoken(fromMarkdown: $0) }
                 .first { !$0.isEmpty }
             return text.map { ($0, ElevenLabs.apiKey()) }

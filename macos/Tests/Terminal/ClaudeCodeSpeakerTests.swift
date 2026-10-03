@@ -74,6 +74,71 @@ struct ClaudeCodeSpeakerTests {
         #expect(ClaudeCodeResponse.last(inTranscript: url) == "Hello there.")
     }
 
+    // MARK: Codex responses
+
+    private func codex(_ type: String, _ payload: [String: Any]) -> Data {
+        line(["type": type, "payload": payload])
+    }
+
+    private func codexAssistant(_ texts: [String]) -> Data {
+        codex("response_item", [
+            "type": "message",
+            "role": "assistant",
+            "content": texts.map { ["type": "output_text", "text": $0] },
+        ])
+    }
+
+    @Test func codexReadsTheLastMessageWithText() {
+        let lines = [
+            codexAssistant(["Let me look."]),
+            codex("response_item", ["type": "function_call", "name": "exec_command", "arguments": "{}"]),
+            codexAssistant(["Here it is.", "  ", "And more."]),
+            codex("event_msg", ["type": "task_complete", "last_agent_message": NSNull()]),
+        ]
+        #expect(ClaudeCodeResponse.last(inCodexLines: lines) == "Here it is.\n\nAnd more.")
+    }
+
+    @Test func codexReadsEventMessagesWithoutRepeatingTheResponse() {
+        let lines = [
+            codexAssistant(["Progress."]),
+            codexAssistant(["Done."]),
+            codex("event_msg", ["type": "agent_message", "message": "Done."]),
+            codex("event_msg", ["type": "task_complete", "last_agent_message": "Done."]),
+        ]
+        #expect(ClaudeCodeResponse.last(inCodexLines: lines) == "Done.")
+        #expect(ClaudeCodeResponse.last(inCodexLines: [lines[2]]) == "Done.")
+        #expect(ClaudeCodeResponse.last(inCodexLines: [lines[3]]) == "Done.")
+    }
+
+    @Test func codexSkipsToolsReasoningAndUserMessages() {
+        let skipped = [
+            codex("response_item", [
+                "type": "message", "role": "user", "content": [["type": "input_text", "text": "User message"]],
+            ]),
+            codex("response_item", ["type": "function_call_output", "output": "Tool result"]),
+            codex("response_item", ["type": "reasoning", "content": [["type": "reasoning_text", "text": "Thinking"]]]),
+            codex("event_msg", ["type": "agent_reasoning", "text": "Thinking"]),
+            codexAssistant([" \n"]),
+            codex("event_msg", ["type": "agent_message", "message": ""]),
+            line(["not": "a rollout line"]),
+            Data("not json".utf8),
+        ]
+        #expect(ClaudeCodeResponse.last(inCodexLines: [codexAssistant(["Done."])] + skipped) == "Done.")
+        #expect(ClaudeCodeResponse.last(inCodexLines: skipped) == nil)
+        #expect(ClaudeCodeResponse.last(inCodexLines: []) == nil)
+    }
+
+    @Test func readsACodexRolloutFile() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var data = codexAssistant(["Hello from Codex."])
+        data.append(UInt8(ascii: "\n"))
+        try data.write(to: url)
+        #expect(ClaudeCodeResponse.last(inTranscript: url, of: .codex) == "Hello from Codex.")
+        #expect(ClaudeCodeResponse.last(inTranscript: url, of: .claude) == nil)
+    }
+
     // MARK: Model
 
     @Test func modelIsTheLastResponsesOwn() {
