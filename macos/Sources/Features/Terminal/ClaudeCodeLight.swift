@@ -264,9 +264,11 @@ final class ClaudeCodeEditTracker {
     private var seen: Set<String> = []
 
     private let agent: CodingAgent
+    private let directory: String?
 
-    init(agent: CodingAgent = .claude) {
+    init(agent: CodingAgent = .claude, directory: String? = nil) {
         self.agent = agent
+        self.directory = directory
     }
 
     /// Where the next read starts: just after the last complete line.
@@ -336,19 +338,39 @@ final class ClaudeCodeEditTracker {
         }
     }
 
-    /// Codex records each edit it finished as a `FileChange` item, whose changes are
-    /// keyed by the file's absolute path.
+    /// Paginated histories use FileChange items, older histories patch_apply_end.
+    /// Failed or declined patches are not edits. Paths can be relative to the session.
     private func consumeCodex(line: Data) {
-        guard line.range(of: Data("\"FileChange\"".utf8)) != nil,
+        guard line.range(of: Data("\"FileChange\"".utf8)) != nil ||
+                line.range(of: Data("\"patch_apply_end\"".utf8)) != nil,
               let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               entry["type"] as? String == "event_msg",
-              let payload = entry["payload"] as? [String: Any],
-              payload["type"] as? String == "item_completed",
-              let item = payload["item"] as? [String: Any],
-              item["type"] as? String == "FileChange",
-              let changes = item["changes"] as? [String: Any] else { return }
+              let payload = entry["payload"] as? [String: Any] else { return }
+        let item: [String: Any]
+        switch payload["type"] as? String {
+        case "item_completed":
+            guard let change = payload["item"] as? [String: Any], change["type"] as? String == "FileChange" else { return }
+            item = change
+        case "patch_apply_end":
+            guard payload["success"] as? Bool == true else { return }
+            item = payload
+        default: return
+        }
+        if let status = item["status"] as? String, status != "completed" { return }
+        guard let changes = item["changes"] as? [String: Any] else { return }
         for path in changes.keys.sorted() {
+            addCodex(path)
+            if let change = changes[path] as? [String: Any], let moved = change["move_path"] as? String {
+                addCodex(moved)
+            }
+        }
+    }
+
+    private func addCodex(_ path: String) {
+        if path.hasPrefix("/") {
             add(path)
+        } else if let directory, directory.hasPrefix("/") {
+            add(URL(fileURLWithPath: directory).appendingPathComponent(path).standardizedFileURL.path)
         }
     }
 
@@ -382,7 +404,7 @@ final class ClaudeCodeLights {
     /// Claude Code rewrites its registry entry in place, so it can be read half written.
     /// It is read again after this long, a few times, before the session is given up on.
     private static let retryDelay: TimeInterval = 0.2
-    private static let retries = 5
+    nonisolated private static let retries = 5
 
     /// Git moves a branch by writing `main.lock` and renaming it over `main`, and the
     /// first of those changes is seen before the second is made. A session is read this
@@ -402,6 +424,8 @@ final class ClaudeCodeLights {
 
     /// A watch on the registry entry of each session shown in an `auto` tab, by process.
     private var entryWatches: [Int: DispatchSourceFileSystemObject] = [:]
+    private var entryURLs: [Int: URL] = [:]
+    private var entryGenerations: [Int: UUID] = [:]
 
     /// While a session isn't working: watches on its transcript and on the git directories
     /// of the files it edited, by process.
@@ -411,15 +435,24 @@ final class ClaudeCodeLights {
     /// Sessions to read once a change to what they watch settles.
     private var settlingReads: Set<Int> = []
 
+    /// Processes whose entry is being looked for.
+    private var locating: Set<Int> = []
+
     /// A watch on the registry directory, while any tab is `auto`.
     private var directoryWatch: DispatchSourceFileSystemObject?
     private var rescanTimer: Timer?
+    private var titleObserver: NSObjectProtocol?
 
     private struct WeakWindow {
         weak var window: TerminalWindow?
     }
 
-    private init() {}
+    private init() {
+        titleObserver = NotificationCenter.default.addObserver(forName: CodexSession.titleDidChange,
+                                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.rescan() }
+        }
+    }
 
     /// Starts or stops following `window`, as its color becomes or stops being `auto`.
     func follow(_ window: TerminalWindow) {
@@ -489,11 +522,17 @@ final class ClaudeCodeLights {
         }
 
         let shown = Set(pids.values.joined())
-        for pid in entryWatches.keys where !shown.contains(pid) {
+        for pid in entryGenerations.keys where !shown.contains(pid) {
             forget(pid)
         }
-        for pid in shown where entryWatches[pid] == nil {
-            watchEntry(of: pid)
+        for pid in shown {
+            if entryGenerations[pid] == nil {
+                locate(pid)
+            } else {
+                // /new and /resume keep the TUI's process; reading again also catches a
+                // model or status change that didn't append to the rollout.
+                read(pid)
+            }
         }
 
         if windows.isEmpty {
@@ -514,19 +553,49 @@ final class ClaudeCodeLights {
     private func forget(_ pid: Int) {
         entryWatches[pid]?.cancel()
         entryWatches[pid] = nil
+        entryURLs[pid] = nil
+        entryGenerations[pid] = nil
         setIdleWatches([], for: pid)
         states[pid] = nil
     }
 
     // MARK: Sessions
 
-    /// Watches the registry entry of process `pid`, if it has one, or its Codex rollout
-    /// if it has one of those, and reads it.
-    private func watchEntry(of pid: Int) {
-        let file = ClaudeCodeSession.registryFile(pid: pid)
-        let entry = FileManager.default.fileExists(atPath: file.path) ? file : CodexSession.running(pid: pid)?.rollout
+    /// Finds what process `pid` has to watch, off the main thread: Claude Code's registry
+    /// entry, or the rollout of the Codex session it runs, which takes walking its process
+    /// tree and open files. A process with neither, and no live Codex title, isn't followed.
+    private func locate(_ pid: Int) {
+        guard locating.insert(pid).inserted else { return }
+        let reader = reader
+        queue.async {
+            let entry = reader.entry(pid: pid)
+            let hasLiveTitle = CodexSession.liveStatus(pid: pid) != nil
+            DispatchQueue.main.async {
+                self.locating.remove(pid)
+                guard self.entryGenerations[pid] == nil,
+                      self.pids.values.contains(where: { $0.contains(pid) }),
+                      entry != nil || hasLiveTitle else { return }
+                self.watchEntry(of: pid, entry: entry)
+            }
+        }
+    }
+
+    /// Watches `entry`, the registry entry or rollout of process `pid`, and reads it.
+    /// Before its first prompt Codex has a title but no rollout yet, so `entry` can be nil.
+    private func watchEntry(of pid: Int, entry: URL?) {
+        entryGenerations[pid] = UUID()
+        rewatch(pid, entry: entry)
+        read(pid)
+    }
+
+    /// Follows `entry` for process `pid` in place of what was watched, keeping what is
+    /// shown meanwhile: a Codex TUI's rollout changes when it switches thread.
+    private func rewatch(_ pid: Int, entry: URL?) {
+        entryWatches[pid]?.cancel()
+        entryWatches[pid] = nil
+        entryURLs[pid] = entry
         guard let entry else { return }
-        guard let watch = Self.watch(entry, events: [.write, .extend, .delete, .rename], handler: { [weak self] watch in
+        entryWatches[pid] = Self.watch(entry, events: [.write, .extend, .delete, .rename]) { [weak self] watch in
             guard let self else { return }
             if watch.data.contains(.delete) || watch.data.contains(.rename) {
                 // The agent exited. The entry may come back under the same process, so it
@@ -536,17 +605,16 @@ final class ClaudeCodeLights {
             } else {
                 self.readOnceSettled(pid)
             }
-        }) else { return }
-        entryWatches[pid] = watch
-        read(pid)
+        }
     }
 
     private func read(_ pid: Int, retriesLeft: Int = ClaudeCodeLights.retries) {
+        guard let generation = entryGenerations[pid] else { return }
         let reader = reader
         queue.async {
             let reading = reader.read(pid: pid)
             DispatchQueue.main.async {
-                guard self.entryWatches[pid] != nil else { return }
+                guard self.entryGenerations[pid] == generation else { return }
                 switch reading {
                 case .unreadable where retriesLeft > 0:
                     // Keep what is shown until the entry reads whole.
@@ -559,7 +627,13 @@ final class ClaudeCodeLights {
                     self.states[pid] = nil
                     self.setIdleWatches([], for: pid)
 
-                case .session(let state, let watchWhileIdle):
+                case .session(let state, let watchWhileIdle, let entry):
+                    if state == nil, entry == nil, CodexSession.liveStatus(pid: pid) == nil {
+                        // The agent is gone from this process. The next rescan looks again.
+                        self.forget(pid)
+                        break
+                    }
+                    if entry != self.entryURLs[pid] { self.rewatch(pid, entry: entry) }
                     self.states[pid] = state
                     self.setIdleWatches(watchWhileIdle, for: pid)
                 }
@@ -651,8 +725,9 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
         /// written.
         case unreadable
 
-        /// The session's state, if it has one, and what to watch while it isn't working.
-        case session(ClaudeCodeTabState?, watchWhileIdle: [URL])
+        /// The session's state, if it has one, what to watch while it isn't working, and
+        /// the entry it was read from, when a session was found.
+        case session(ClaudeCodeTabState?, watchWhileIdle: [URL], entry: URL? = nil)
     }
 
     /// Per session: its transcript, once found, and the files it edited.
@@ -661,19 +736,45 @@ private final class ClaudeCodeLightReader: @unchecked Sendable {
     /// The repository of each directory looked up, or nil for a directory outside one.
     private var repositories: [String: Git.Repository?] = [:]
 
+    /// What process `pid` has to watch: Claude Code's registry entry, or the rollout of
+    /// the Codex session it runs. Nil for a process running neither, and for a Codex that
+    /// hasn't written its rollout yet.
+    func entry(pid: Int) -> URL? {
+        let file = ClaudeCodeSession.registryFile(pid: pid)
+        if FileManager.default.fileExists(atPath: file.path) { return file }
+        return CodexSession.running(pid: pid)?.rollout
+    }
+
     func read(pid: Int) -> Reading {
         guard let (session, status) = Self.activity(pid: pid) else {
+            if let status = CodexSession.liveStatus(pid: pid) {
+                return .session(Self.state(status: status), watchWhileIdle: [])
+            }
             let exists = FileManager.default.fileExists(atPath: ClaudeCodeSession.registryFile(pid: pid).path)
             return exists ? .unreadable : .session(nil, watchWhileIdle: [])
         }
 
+        // The entry the session was read from, so one that moves to another file, as a
+        // Codex TUI's does when it switches thread, is followed there.
+        let entry: URL?
+        switch session {
+        case .claude: entry = ClaudeCodeSession.registryFile(pid: pid)
+        case .codex: entry = session.transcript
+        }
+        switch read(session, status: status) {
+        case .unreadable: return .unreadable
+        case .session(let state, let watch, _): return .session(state, watchWhileIdle: watch, entry: entry)
+        }
+    }
+
+    private func read(_ session: AgentSession, status: String) -> Reading {
         // What the session changed only matters once it stops working.
         guard status == "idle" else {
             return .session(Self.state(status: status), watchWhileIdle: [])
         }
 
-        if transcripts[session.id] == nil, let url = session.transcript {
-            transcripts[session.id] = (url, ClaudeCodeEditTracker(agent: session.agent))
+        if let url = session.transcript, transcripts[session.id]?.url != url {
+            transcripts[session.id] = (url, ClaudeCodeEditTracker(agent: session.agent, directory: session.cwd))
         }
 
         // A session in its own worktree owns every change there, however it made them, so

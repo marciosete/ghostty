@@ -71,11 +71,14 @@ final class TabSidebarSessionInfoReader {
     private func info(for request: Request) -> TabSidebarSessionInfo {
         var info = TabSidebarSessionInfo()
         info.sessions = request.pids.compactMap(AgentSession.running(pid:))
-        info.directory = info.sessions.first?.cwd ?? request.directory
+        info.directory = info.sessions.first?.cwd
+            ?? request.pids.lazy.compactMap { CodexSession.liveDirectory(pid: $0) }.first
+            ?? request.directory
         info.lastActive = info.sessions
             .compactMap { $0.transcript.flatMap(Self.modified) }
             .max()
         info.model = info.sessions.first.flatMap(model(of:))
+            ?? request.pids.lazy.compactMap { CodexSession.liveModel(pid: $0) }.first
 
         info.checkout = info.directory.flatMap(checkout(of:))
         return info
@@ -86,16 +89,15 @@ final class TabSidebarSessionInfoReader {
     }
 
     private func model(of session: AgentSession) -> String? {
+        // Paginated Codex history keeps its model in the session database. A model
+        // change can update that without appending to the rollout.
+        if case .codex(let codex) = session { return codex.model }
         guard let transcript = session.transcript, let modified = Self.modified(transcript) else { return nil }
         if let known = models[transcript], known.modified == modified {
             return known.value
         }
         // A response too far back to read leaves the model it was known to be.
-        let read: String?
-        switch session {
-        case .claude: read = ClaudeCodeResponse.model(inTranscript: transcript)
-        case .codex: read = CodexSession.Rollout.model(of: transcript)
-        }
+        let read = ClaudeCodeResponse.model(inTranscript: transcript)
         let value = read ?? models[transcript]?.value
         models[transcript] = (value, modified)
         return value

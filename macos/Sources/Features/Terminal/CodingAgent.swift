@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Darwin
 import Foundation
 
 /// A coding agent Maggie can run in its terminals: started in new sessions, found in
@@ -24,13 +25,77 @@ enum CodingAgent: String, CaseIterable, Codable {
         }
     }
 
+    /// A terminal session needs its own server so its history can be tied to the
+    /// foreground process. Older Codex versions already run that way.
+    var launchCommand: String {
+        launchCommand(isolateCodex: self == .codex && Self.codexOptions.contains("--no-daemon"))
+    }
+
+    /// Looks up the installed Codex's options off the main thread, ahead of the first
+    /// command made, which would otherwise wait for `codex --help`.
+    static func prepare() {
+        DispatchQueue.global(qos: .utility).async { _ = codexOptions }
+    }
+
+    func launchCommand(isolateCodex: Bool) -> String {
+        guard self == .codex, isolateCodex else { return command }
+        // Each launched TUI identifies the thread it is currently showing, including
+        // after /new or /resume. The activity item also reports approval prompts.
+        let title = #"tui.terminal_title=["activity","app-name","model","run-state","session-id","thread-title"]"#
+        return "codex --no-daemon -c \(AgentHandoff.shellQuoted(title))"
+    }
+
+    private static let codexOptions: Set<String> = {
+        guard let executable = CodingAgent.codex.executableURL() else { return [] }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["--help"]
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "PATH": searchPath.joined(separator: ":"),
+        ]) { _, new in new }
+        process.standardInput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        let output = Pipe()
+        process.standardOutput = output
+        do {
+            try process.run()
+        } catch {
+            return []
+        }
+
+        // The help is read as Codex writes it, so a long one can't fill the pipe and
+        // stall both sides, and for a bounded time, so a Codex that hangs is given up on.
+        let fd = output.fileHandleForReading.fileDescriptor
+        let deadline = Date().addingTimeInterval(5)
+        var help = Data()
+        var buffer = [UInt8](repeating: 0, count: 8192)
+        while Date() < deadline {
+            var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&descriptor, 1, max(1, Int32(deadline.timeIntervalSinceNow * 1000)))
+            if ready < 0, errno == EINTR { continue }
+            guard ready > 0 else { break }
+            let count = Darwin.read(fd, &buffer, buffer.count)
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { break }
+            help.append(contentsOf: buffer.prefix(count))
+        }
+        if process.isRunning { process.terminate() }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return [] }
+        let text = String(decoding: help, as: UTF8.self)
+        return Set(text.split(whereSeparator: \.isWhitespace).filter { $0.hasPrefix("--") }.map(String.init))
+    }()
+
     /// The command that starts the agent in its own worktree of the repository it is
     /// started in. Both agents keep their worktrees as linked worktrees of the main
     /// checkout, which is what the sidebar lands.
+    ///
+    /// Codex's worktrees are behind a feature flag. A Codex too old for them refuses the
+    /// command, and the session starts without one, as `AgentStart.command` arranges.
     var worktreeCommand: String {
         switch self {
         case .claude: return "claude -w"
-        case .codex: return "codex --worktree"
+        case .codex: return "\(launchCommand) --enable worktrees --worktree"
         }
     }
 
@@ -38,7 +103,7 @@ enum CodingAgent: String, CaseIterable, Codable {
     func resumeCommand(_ id: UUID) -> String {
         switch self {
         case .claude: return "claude --resume \(id.uuidString.lowercased())"
-        case .codex: return "codex resume \(id.uuidString.lowercased())"
+        case .codex: return "\(launchCommand) resume \(id.uuidString.lowercased())"
         }
     }
 
@@ -259,8 +324,9 @@ enum AgentSession: Equatable {
             AgentStart.environmentVariable: "1",
             AgentStart.agentEnvironmentVariable: agent.rawValue,
         ]
-        if case .claude(let session) = self {
-            environment.merge(session.resumeEnvironment) { _, new in new }
+        switch self {
+        case .claude(let session): environment.merge(session.resumeEnvironment) { _, new in new }
+        case .codex(let session): environment.merge(session.resumeEnvironment) { _, new in new }
         }
         return environment
     }

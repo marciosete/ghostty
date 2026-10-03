@@ -207,8 +207,8 @@ enum AgentHandoff {
     /// prompt, a plain start in the session's directory: the worktree is the one being
     /// continued, so no new one is made.
     static func command(for agent: CodingAgent, prompt: String?) -> String {
-        guard let prompt else { return agent.command }
-        return "\(agent.command) \(shellQuoted(prompt))"
+        guard let prompt else { return agent.launchCommand }
+        return "\(agent.launchCommand) \(shellQuoted(prompt))"
     }
 
     static func shellQuoted(_ text: String) -> String {

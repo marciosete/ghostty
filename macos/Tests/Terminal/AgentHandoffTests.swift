@@ -104,7 +104,7 @@ struct AgentHandoffTests {
         #expect(prompt.contains(handoff.path))
 
         let command = AgentHandoff.command(for: .codex, prompt: "it's here")
-        #expect(command == "codex 'it'\\''s here'")
+        #expect(command == "\(CodingAgent.codex.launchCommand) 'it'\\''s here'")
         #expect(AgentHandoff.command(for: .claude, prompt: nil) == "claude")
     }
 }

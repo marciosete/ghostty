@@ -236,6 +236,9 @@ class AppDelegate: NSObject,
         // so every terminal gets the proxy's address.
         ClaudeStreams.shared.start()
 
+        // Look up the installed Codex's options before the first session is started.
+        CodingAgent.prepare()
+
         // Add the tab sidebar items to the View menu.
         installTabSidebarMenuItems()
         installSettingsMenuItem()

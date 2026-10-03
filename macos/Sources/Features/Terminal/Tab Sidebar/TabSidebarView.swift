@@ -1051,7 +1051,7 @@ private struct TabSidebarTabRow: View {
         }
     }
 
-    /// The model the session's Claude Code is using. It keeps its width, and the location
+    /// The model the session's agent is using. It keeps its width, and the location
     /// before it is cut short instead.
     @ViewBuilder
     private var modelLabel: some View {

@@ -219,6 +219,9 @@ extension Ghostty {
         // by the user, this is set to the prior value (which may be empty, but non-nil).
         private var titleFromTerminal: String?
 
+        /// The process whose Codex title metadata this surface last observed.
+        private var codexObservedPID: Int?
+
         /// The agent session this surface was restored with, and until when it is saved
         /// again in place of the running one. An agent takes a moment to start and
         /// register, especially with many terminals resuming at once, and a save in between
@@ -418,6 +421,7 @@ extension Ghostty {
         }
 
         deinit {
+            if let pid = codexObservedPID { CodexSession.forget(pid: pid) }
             // Resolve clipboard callback state while surfaceModel is still
             // alive. The request's weak SurfaceView reference is already nil
             // during deinit, so didSet passes this instance explicitly.
@@ -634,6 +638,12 @@ extension Ghostty {
         }
 
         func setTitle(_ title: String) {
+            let pid = surfaceModel?.foregroundPID
+            if let previous = codexObservedPID, previous != pid {
+                CodexSession.forget(pid: previous)
+            }
+            codexObservedPID = pid
+            let title = pid.flatMap { CodexSession.observe(title: title, pid: $0) } ?? title
             // This fixes an issue where very quick changes to the title could
             // cause an unpleasant flickering. We set a timer so that we can
             // coalesce rapid changes. The timer is short enough that it still

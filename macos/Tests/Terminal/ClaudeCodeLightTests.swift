@@ -182,6 +182,26 @@ struct ClaudeCodeLightTests {
         #expect(tracker.files.isEmpty)
     }
 
+    @Test func codexOnlyCountsSuccessfulChangesAndResolvesRelativePaths() {
+        let tracker = ClaudeCodeEditTracker(agent: .codex, directory: "/repo")
+        func fileChange(_ path: String, status: String) -> Data {
+            Self.line(["type": "event_msg", "payload": ["type": "item_completed", "item": [
+                "type": "FileChange", "status": status, "changes": [path: ["type": "update"]],
+            ]]])
+        }
+        tracker.consume(line: fileChange("failed.swift", status: "failed"))
+        tracker.consume(line: fileChange("declined.swift", status: "declined"))
+        tracker.consume(line: fileChange("src/../edited.swift", status: "completed"))
+        tracker.consume(line: Self.line(["type": "event_msg", "payload": [
+            "type": "patch_apply_end", "success": false, "changes": ["failed-patch.swift": ["type": "add"]],
+        ]]))
+        tracker.consume(line: Self.line(["type": "event_msg", "payload": [
+            "type": "patch_apply_end", "success": true,
+            "changes": ["old.swift": ["type": "update", "move_path": "new.swift"]],
+        ]]))
+        #expect(tracker.files == ["/repo/edited.swift", "/repo/old.swift", "/repo/new.swift"])
+    }
+
     @Test func readsOnlyWhatWasAdded() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("claude-code-light-\(UUID().uuidString).jsonl")
@@ -361,6 +381,53 @@ struct ClaudeCodeLightTests {
 
         // The main checkout itself has nothing to count against.
         #expect(Git.status(of: mainRepository)?.base == nil)
+    }
+
+    @Test func codexPrepromptDirectoryRequiresLiveThreadOwnership() throws {
+        let (made, main, worktreeURL) = try Self.repositoryWithWorktree()
+        defer { try? FileManager.default.removeItem(at: made) }
+        let sibling = made.appendingPathComponent("sibling")
+        try Self.git(["worktree", "add", "-q", "--detach", sibling.path], in: main)
+        let worktree = try #require(Git.repository(containing: worktreeURL))
+        let siblingRepository = try #require(Git.repository(containing: sibling))
+        let id = UUID()
+        let otherID = UUID()
+        func own(_ repository: Git.Repository, by owner: UUID) throws {
+            try Self.line(["version": 1, "ownerThreadId": owner.uuidString])
+                .write(to: repository.gitDir.appendingPathComponent("codex-thread.json"))
+        }
+        try own(worktree, by: id)
+        try own(siblingRepository, by: otherID)
+        #expect(CodexSession.worktreeDirectory(of: id, in: worktree.commonDir) == worktree.root.path)
+        #expect(CodexSession.worktreeDirectory(of: UUID(), in: worktree.commonDir) == nil)
+
+        let lockDirectory = made.appendingPathComponent("thread-writer-locks")
+        try FileManager.default.createDirectory(at: lockDirectory, withIntermediateDirectories: true)
+        let lock = lockDirectory.appendingPathComponent("\(id.uuidString).lock")
+        try Data().write(to: lock)
+        let binary = made.appendingPathComponent("codex")
+        try CodexTestProcess.copyExecutable("/bin/sleep", to: binary)
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = ["30"]
+        process.currentDirectoryURL = main
+        process.standardInput = try FileHandle(forReadingFrom: lock)
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let pid = Int(process.processIdentifier)
+        defer {
+            CodexSession.forget(pid: pid)
+            if process.isRunning { process.terminate() }
+        }
+        #expect(CodexSession.observe(title: "codex | test-model | Ready | \(id) | Test", pid: pid) == "✳ Test")
+        #expect(CodexSession.liveDirectory(pid: pid) == worktree.root.path)
+        #expect(CodexSession.running(pid: pid) == nil) // No durable history to resume yet.
+
+        #expect(CodexSession.observe(title: "codex | test-model | Ready | \(otherID) | Other", pid: pid) == "✳ Other")
+        #expect(CodexSession.liveDirectory(pid: pid) == nil) // Sibling metadata alone cannot claim its thread.
+        try own(siblingRepository, by: id)
+        #expect(CodexSession.worktreeDirectory(of: id, in: worktree.commonDir) == nil) // Ambiguous owner records.
     }
 
     @Test func upstreamCommitsAreNotUnlanded() throws {

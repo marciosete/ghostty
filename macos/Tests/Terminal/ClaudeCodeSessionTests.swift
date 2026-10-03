@@ -184,7 +184,7 @@ struct ClaudeCodeSessionTests {
         #expect(decoded.agentSession == .codex(codex))
         let config = decoded.surfaceConfiguration
         #expect(config.workingDirectory == "/Users/me/project")
-        #expect(config.initialInput == "codex resume 01a0b160-4a3f-76f3-8ebb-6c2151615b9a\n")
+        #expect(config.initialInput == "\(CodingAgent.codex.launchCommand) resume 01a0b160-4a3f-76f3-8ebb-6c2151615b9a\n")
         #expect(config.environmentVariables == ["MAGGIE_CLAUDE_CODE_START": "1", "MAGGIE_AGENT": "codex"])
     }
 

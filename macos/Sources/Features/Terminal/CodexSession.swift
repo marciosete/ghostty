@@ -1,12 +1,11 @@
 import Darwin
 import Foundation
+import SQLite3
 
 /// A Codex session running in a terminal, the Codex counterpart of `ClaudeCodeSession`.
 ///
-/// Codex keeps no registry of its processes. It does keep the session's rollout file,
-/// `sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`, open for as long as it runs, so the
-/// session of a process is read off the files it has open. That works for a resumed
-/// session too, whose rollout is older than the process.
+/// A local Codex process owns its session's rollout or writer lock. A shared daemon
+/// owns several terminals' sessions, so its files cannot identify a terminal's session.
 struct CodexSession: Codable, Equatable {
     /// The thread id, a UUID (version 7, so it starts with the time the session was
     /// created). Being a UUID, it is safe to type into a shell.
@@ -16,39 +15,110 @@ struct CodexSession: Codable, Equatable {
     /// but this is where the terminal opens again.
     let cwd: String
 
-    init(id: UUID, cwd: String) {
+    /// Custom homes are saved so reopening a session uses the same Codex history.
+    private let sessionHome: URL?
+    private let processID: Int?
+    private enum CodingKeys: String, CodingKey { case id, cwd, codexHome }
+
+    init(id: UUID, cwd: String, codexHome: URL? = nil, pid: Int? = nil) {
         self.id = id
         self.cwd = cwd
+        self.sessionHome = codexHome
+        self.processID = pid
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         cwd = try container.decode(String.self, forKey: .cwd)
+        let home = try container.decodeIfPresent(String.self, forKey: .codexHome)
+        guard home == nil || home?.hasPrefix("/") == true else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .codexHome, in: container, debugDescription: "not an absolute path")
+        }
+        sessionHome = home.map(URL.init(fileURLWithPath:))
+        processID = nil
         guard cwd.hasPrefix("/") else {
             throw DecodingError.dataCorruptedError(
                 forKey: .cwd, in: container, debugDescription: "not an absolute path")
         }
     }
 
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(cwd, forKey: .cwd)
+        if let sessionHome {
+            try container.encode(sessionHome.path, forKey: .codexHome)
+        }
+    }
+
+    var resumeEnvironment: [String: String] {
+        sessionHome.map { ["CODEX_HOME": $0.path] } ?? [:]
+    }
+
+    private var terminalTitle: TerminalTitle? {
+        guard let processID, let title = Self.liveTitle(pid: processID), title.matches(id) else { return nil }
+        return title
+    }
+
+    static func == (lhs: CodexSession, rhs: CodexSession) -> Bool {
+        lhs.id == rhs.id && lhs.cwd == rhs.cwd
+    }
+
     // MARK: Running sessions
 
     /// The session of process `pid`, if it is Codex running interactively.
     static func running(pid: Int) -> CodexSession? {
-        running(pid: pid, codexHome: codexHome)
+        running(pid: pid, restrictedHome: nil)
     }
 
     static func running(pid: Int, codexHome: URL) -> CodexSession? {
+        running(pid: pid, restrictedHome: codexHome)
+    }
+
+    private static func running(pid: Int, restrictedHome: URL?) -> CodexSession? {
+        let foregroundPID = pid
+        let title = liveTitle(pid: pid)
         guard let pid = pid_t(exactly: pid), pid > 0 else { return nil }
-        // Codex installed with npm is a node script that runs the real binary as its
-        // child, so the terminal's foreground process is node.
-        let candidates = [pid] + RunningProcess.children(pid)
-        for candidate in candidates where RunningProcess.name(candidate) == "codex" {
-            guard let rollout = RunningProcess.openFiles(candidate).first(where: { Self.isRollout($0, in: codexHome) }),
-                  let header = Rollout.header(of: URL(fileURLWithPath: rollout)),
-                  header.isInteractive else { continue }
-            Self.remember(rollout: URL(fileURLWithPath: rollout), of: header.id)
-            return CodexSession(id: header.id, cwd: header.cwd)
+        // npm adds a node wrapper, and a local app server may add another process.
+        // Never descend into the shared daemon: it can be a child of the first TUI
+        // that launched it, while serving unrelated terminals too.
+        var candidates = [pid]
+        var visited: Set<pid_t> = []
+        while !candidates.isEmpty {
+            let candidate = candidates.removeFirst()
+            guard visited.insert(candidate).inserted else { continue }
+            let name = RunningProcess.name(candidate)
+            let processArguments = RunningProcess.arguments(candidate)
+            // If a Codex process's arguments are unreadable, we cannot establish
+            // that it isn't the shared daemon.
+            guard name != "codex" || processArguments != nil else { continue }
+            let arguments = processArguments ?? []
+            guard !arguments.contains("--managed-daemon") else { continue }
+            candidates.append(contentsOf: RunningProcess.children(candidate))
+            guard name == "codex" else { continue }
+
+            let files = RunningProcess.openFiles(candidate)
+            // The terminal's shell may set CODEX_HOME without the app inheriting it.
+            // Owned paths identify that home without reading the process environment.
+            let homes = restrictedHome.map { [$0] } ?? Array(Set(files.compactMap(home(ofOwnedFile:))))
+            var sessions: [UUID: CodexSession] = [:]
+            for home in homes {
+                var rollouts = files.filter { isRollout($0, in: home) }.map(URL.init(fileURLWithPath:))
+                rollouts += files.compactMap { threadID(ofWriterLock: $0, in: home) }
+                    .compactMap { findRollout(of: $0, in: home) }
+                for rollout in rollouts {
+                    guard let header = Rollout.header(of: rollout), header.isInteractive,
+                          title == nil || title?.matches(header.id) == true else { continue }
+                    remember(rollout: rollout, of: header.id, in: home)
+                    let cwd = State.cwd(of: header.id, in: home) ?? header.cwd
+                    sessions[header.id] = CodexSession(id: header.id, cwd: cwd, codexHome: home, pid: foregroundPID)
+                }
+            }
+            // A TUI can keep several threads loaded. Without an identifying title,
+            // assigning the first open file would show another thread's information.
+            if sessions.count == 1 { return sessions.values.first }
         }
         return nil
     }
@@ -56,27 +126,29 @@ struct CodexSession: Codable, Equatable {
     /// Where Codex writes the session, if it has started writing it. A session that
     /// hasn't been given a prompt yet has no rollout, and can't be resumed.
     var rollout: URL? {
-        rollout(in: Self.codexHome)
+        rollout(in: sessionHome ?? Self.codexHome)
     }
 
     func rollout(in codexHome: URL) -> URL? {
-        if let known = Self.knownRollouts[id], FileManager.default.fileExists(atPath: known.path) {
+        let key = RolloutKey(id: id, home: codexHome)
+        if let known = Self.knownRollouts[key], FileManager.default.fileExists(atPath: known.path) {
             return known
         }
         guard let found = Self.findRollout(of: id, in: codexHome) else { return nil }
-        Self.remember(rollout: found, of: id)
+        Self.remember(rollout: found, of: id, in: codexHome)
         return found
     }
 
     /// What the session is doing, from the end of its rollout: "busy" while a turn runs,
     /// "idle" between turns, nil before the first turn.
     var status: String? {
-        rollout.flatMap(Rollout.status(of:))
+        terminalTitle?.status ?? rollout.flatMap(Rollout.status(of:))
     }
 
-    /// The model the session is using, from its last turn.
+    /// Codex's selected model, or the last turn's model in older versions. Checking
+    /// the database first also avoids scanning paginated history without turn contexts.
     var model: String? {
-        rollout.flatMap(Rollout.model(of:))
+        terminalTitle?.model ?? State.model(of: id, in: sessionHome ?? Self.codexHome) ?? rollout.flatMap(Rollout.model(of:))
     }
 
     // MARK: Rollout files
@@ -101,21 +173,52 @@ struct CodexSession: Codable, Equatable {
         return threadID(ofRollout: (resolved as NSString).lastPathComponent) != nil
     }
 
+    private static func threadID(ofWriterLock path: String, in codexHome: URL) -> UUID? {
+        let directory = codexHome.appendingPathComponent("thread-writer-locks")
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let file = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        guard file.deletingLastPathComponent() == directory, file.pathExtension == "lock" else { return nil }
+        return UUID(uuidString: file.deletingPathExtension().lastPathComponent)
+    }
+
+    static func home(ofOwnedFile path: String) -> URL? {
+        let file = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        let parent = file.deletingLastPathComponent()
+        if parent.lastPathComponent == "thread-writer-locks", file.pathExtension == "lock",
+           UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil {
+            return parent.deletingLastPathComponent()
+        }
+        guard threadID(ofRollout: file.lastPathComponent) != nil else { return nil }
+        let sessions = parent.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        guard sessions.lastPathComponent == "sessions" else { return nil }
+        return sessions.deletingLastPathComponent()
+    }
+
+    private struct RolloutKey: Hashable {
+        let id: UUID
+        let home: URL
+
+        init(id: UUID, home: URL) {
+            self.id = id
+            self.home = home.standardizedFileURL.resolvingSymlinksInPath()
+        }
+    }
+
     /// Rollouts found by thread id, so a session's file isn't searched for again. Read
     /// from several queues.
-    private static var knownRolloutsStorage: [UUID: URL] = [:]
+    private static var knownRolloutsStorage: [RolloutKey: URL] = [:]
     private static let knownRolloutsLock = NSLock()
 
-    private static var knownRollouts: [UUID: URL] {
+    private static var knownRollouts: [RolloutKey: URL] {
         knownRolloutsLock.lock()
         defer { knownRolloutsLock.unlock() }
         return knownRolloutsStorage
     }
 
-    private static func remember(rollout: URL, of id: UUID) {
+    private static func remember(rollout: URL, of id: UUID, in codexHome: URL) {
         knownRolloutsLock.lock()
         defer { knownRolloutsLock.unlock() }
-        knownRolloutsStorage[id] = rollout
+        knownRolloutsStorage[RolloutKey(id: id, home: codexHome)] = rollout
     }
 
     /// The rollout of thread `id`. Rollouts are filed by the local date they were
@@ -124,6 +227,12 @@ struct CodexSession: Codable, Equatable {
     /// a revert has written more than one.
     static func findRollout(of id: UUID, in codexHome: URL) -> URL? {
         let fileManager = FileManager.default
+        if let path = State.rollout(of: id, in: codexHome),
+           isRollout(path, in: codexHome),
+           threadID(ofRollout: (path as NSString).lastPathComponent) == id,
+           fileManager.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
         let sessions = codexHome.appendingPathComponent("sessions")
         var days: [URL] = []
         if let created = creationDate(ofUUIDv7: id) {
@@ -172,6 +281,46 @@ struct CodexSession: Codable, Equatable {
         return URL(fileURLWithPath: path)
     }
 
+    // MARK: Paginated history metadata
+
+    /// Exact thread lookups only. Opening read-only never creates or migrates Codex's
+    /// database, and an unavailable database/column simply leaves the metadata unknown.
+    enum State {
+        static func model(of id: UUID, in home: URL) -> String? {
+            value("model", of: id, in: home)
+        }
+
+        static func rollout(of id: UUID, in home: URL) -> String? {
+            value("rollout_path", of: id, in: home)
+        }
+
+        static func cwd(of id: UUID, in home: URL) -> String? {
+            guard let path = value("cwd", of: id, in: home), path.hasPrefix("/") else { return nil }
+            return path
+        }
+
+        private static func value(_ column: String, of id: UUID, in home: URL) -> String? {
+            var database: OpaquePointer?
+            let result = sqlite3_open_v2(
+                home.appendingPathComponent("state_5.sqlite").path,
+                &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
+            defer { sqlite3_close(database) }
+            guard result == SQLITE_OK else { return nil }
+
+            var statement: OpaquePointer?
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_prepare_v2(database, "SELECT \(column) FROM threads WHERE id = ? LIMIT 1", -1,
+                                    &statement, nil) == SQLITE_OK else { return nil }
+            return id.uuidString.lowercased().withCString { identifier in
+                guard sqlite3_bind_text(statement, 1, identifier, -1, nil) == SQLITE_OK,
+                      sqlite3_step(statement) == SQLITE_ROW,
+                      let value = sqlite3_column_text(statement, 0) else { return nil }
+                let text = String(cString: value)
+                return text.isEmpty ? nil : text
+            }
+        }
+    }
+
     // MARK: Reading rollouts
 
     /// Reads what a tab needs from a rollout: its header, and the last turn's state and
@@ -183,15 +332,20 @@ struct CodexSession: Codable, Equatable {
             let id: UUID
             let cwd: String
 
-            /// "cli" for a session in a terminal; "exec" for `codex exec`, "vscode" and
-            /// others for sessions of other apps.
+            /// New TUI app-server sessions use "vscode" with originator "codex-tui".
+            /// A structured source identifies a subagent, not a missing source.
             let source: String?
+            let originator: String?
+            let isSubagent: Bool
 
             /// A session that can be resumed in a terminal.
-            var isInteractive: Bool { source == nil || source == "cli" }
+            var isInteractive: Bool {
+                !isSubagent && (source == nil || source == "cli" ||
+                    (source == "vscode" && originator == "codex-tui"))
+            }
         }
 
-        /// A rollout's first line is written whole, and small.
+        /// Session metadata can include large instructions, so read through its newline.
         private static let headerLength = 64 << 10
 
         /// How much of the end is read at a time.
@@ -211,9 +365,13 @@ struct CodexSession: Codable, Equatable {
 
             guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
             defer { try? handle.close() }
-            guard let data = try? handle.read(upToCount: headerLength),
-                  let newline = data.firstIndex(of: UInt8(ascii: "\n")) else { return nil }
-            guard let header = header(line: data[data.startIndex..<newline]) else { return nil }
+            var data = Data()
+            while let chunk = try? handle.read(upToCount: headerLength), !chunk.isEmpty {
+                data.append(chunk)
+                if data.contains(UInt8(ascii: "\n")) { break }
+            }
+            guard let newline = data.firstIndex(of: UInt8(ascii: "\n")),
+                  let header = header(line: data[data.startIndex..<newline]) else { return nil }
 
             headersLock.lock()
             headers[url] = header
@@ -227,72 +385,68 @@ struct CodexSession: Codable, Equatable {
                   let payload = entry["payload"] as? [String: Any],
                   let id = ((payload["id"] ?? payload["session_id"]) as? String).flatMap(UUID.init(uuidString:)),
                   let cwd = payload["cwd"] as? String, cwd.hasPrefix("/") else { return nil }
-            return Header(id: id, cwd: cwd, source: payload["source"] as? String)
+            return Header(
+                id: id, cwd: cwd, source: payload["source"] as? String,
+                originator: payload["originator"] as? String,
+                isSubagent: payload["source"] is [String: Any])
         }
-
-        /// The events that say whether a turn is running.
-        private static let turnEvents: [(needle: String, status: String)] = [
-            ("\"type\":\"task_started\"", "busy"),
-            ("\"type\":\"task_complete\"", "idle"),
-            ("\"type\":\"turn_aborted\"", "idle"),
-        ]
 
         /// "busy" while the last turn started hasn't finished, "idle" once it has, nil for
         /// a session without a turn yet.
         static func status(of url: URL) -> String? {
-            var found: (offset: Int, status: String)?
-            scanBackwards(url) { chunk, base in
-                for event in turnEvents {
-                    guard let range = chunk.range(of: Data(event.needle.utf8), options: .backwards) else { continue }
-                    let offset = base + range.lowerBound - chunk.startIndex
-                    if let current = found, current.offset >= offset { continue }
-                    found = (offset, event.status)
+            var status: String?
+            scanBackwards(url) { line in
+                guard line.range(of: Data("\"event_msg\"".utf8)) != nil,
+                      let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                      entry["type"] as? String == "event_msg",
+                      let payload = entry["payload"] as? [String: Any] else { return false }
+                switch payload["type"] as? String {
+                case "task_started", "turn_started": status = "busy"
+                case "task_complete", "turn_complete", "turn_aborted": status = "idle"
+                default: break
                 }
-                return found != nil
+                return status != nil
             }
-            return found?.status
+            return status
         }
 
         /// The model of the last turn, from its `turn_context`.
         static func model(of url: URL) -> String? {
-            let needle = Data("\"type\":\"turn_context\"".utf8)
+            let needle = Data("\"turn_context\"".utf8)
             var model: String?
-            scanBackwards(url) { chunk, _ in
-                var searchEnd = chunk.endIndex
-                while let range = chunk[chunk.startIndex..<searchEnd].range(of: needle, options: .backwards) {
-                    let lineStart = chunk[chunk.startIndex..<range.lowerBound].lastIndex(of: UInt8(ascii: "\n"))
-                        .map { chunk.index(after: $0) } ?? chunk.startIndex
-                    let lineEnd = chunk[range.upperBound...].firstIndex(of: UInt8(ascii: "\n")) ?? chunk.endIndex
-                    if let entry = try? JSONSerialization.jsonObject(with: chunk[lineStart..<lineEnd]) as? [String: Any],
-                       entry["type"] as? String == "turn_context",
-                       let payload = entry["payload"] as? [String: Any],
-                       let name = payload["model"] as? String, !name.isEmpty {
-                        model = name
-                        return true
-                    }
-                    searchEnd = range.lowerBound
-                }
-                return false
+            scanBackwards(url) { line in
+                guard line.range(of: needle) != nil,
+                      let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                      entry["type"] as? String == "turn_context",
+                      let payload = entry["payload"] as? [String: Any],
+                      let name = payload["model"] as? String, !name.isEmpty else { return false }
+                model = name
+                return true
             }
             return model
         }
 
-        /// Calls `body` with chunks of the file from its end back to its start, each
-        /// overlapping the one before by a line's worth, until `body` returns true.
-        private static func scanBackwards(_ url: URL, _ body: (Data, Int) -> Bool) {
+        /// Reads whole JSONL records backwards, including records spanning chunks.
+        /// Parsing the envelope avoids interpreting tool output as session events.
+        private static func scanBackwards(_ url: URL, _ body: (Data) -> Bool) {
             guard let handle = try? FileHandle(forReadingFrom: url),
                   let size = try? handle.seekToEnd() else { return }
             defer { try? handle.close() }
 
-            // Chunks overlap by this much, so an event split across two is seen whole.
-            let overlap = 1024
             var end = Int(size)
+            var partial = Data()
             while end > 0 {
                 let start = max(0, end - tailChunk)
                 try? handle.seek(toOffset: UInt64(start))
-                guard let chunk = try? handle.read(upToCount: end - start), !chunk.isEmpty else { return }
-                if body(chunk, start) || start == 0 { return }
-                end = start + overlap
+                guard var chunk = try? handle.read(upToCount: end - start), !chunk.isEmpty else { return }
+                chunk.append(partial)
+                let lines = chunk.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+                let whole = start == 0 ? lines[...] : lines.dropFirst()
+                for line in whole.reversed() where !line.isEmpty {
+                    if body(Data(line)) { return }
+                }
+                partial = start == 0 ? Data() : Data(lines.first ?? Data.SubSequence())
+                end = start
             }
         }
     }

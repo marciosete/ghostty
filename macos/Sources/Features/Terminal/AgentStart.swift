@@ -21,10 +21,10 @@ final class AgentStart: ObservableObject {
 
     /// Set to "1" in a terminal this starts an agent in, or that resumes one. The name
     /// is from when Claude Code was the only agent; shell startup files check it.
-    static let environmentVariable = "MAGGIE_CLAUDE_CODE_START"
+    nonisolated static let environmentVariable = "MAGGIE_CLAUDE_CODE_START"
 
     /// Set to the agent's name, `claude` or `codex`, next to `environmentVariable`.
-    static let agentEnvironmentVariable = "MAGGIE_AGENT"
+    nonisolated static let agentEnvironmentVariable = "MAGGIE_AGENT"
 
     private static let enabledKey = "ClaudeCodeStartsInNewSessions"
 
@@ -62,12 +62,36 @@ final class AgentStart: ObservableObject {
     /// The command for a terminal starting `agent` in `directory` (the shell's default
     /// when nil).
     nonisolated static func command(for agent: CodingAgent, in directory: String?) -> String {
-        guard let directory, let main = mainCheckout(of: directory) else { return agent.command }
+        guard let directory else {
+            // Claude's registry identifies the foreground process directly. Keep its
+            // plain launch when the directory is unknown instead of adding a wrapper.
+            return agent == .codex ? commandInShellDirectory(for: agent) : agent.launchCommand
+        }
+        guard let main = mainCheckout(of: directory) else { return agent.launchCommand }
         let here = URL(fileURLWithPath: directory).standardizedFileURL.path
         if URL(fileURLWithPath: main).standardizedFileURL.path == here {
-            return "\(agent.worktreeCommand) || \(agent.command)"
+            return "\(agent.worktreeCommand) || \(agent.launchCommand)"
         }
-        return "(cd '\(main)' && \(agent.worktreeCommand)) || \(agent.command)"
+        return "(cd \(AgentHandoff.shellQuoted(main)) && \(agent.worktreeCommand)) || \(agent.launchCommand)"
+    }
+
+    /// The first terminal can inherit its directory from Ghostty's configuration or
+    /// the shell profile after this command is prepared. Resolve Git in that shell's
+    /// actual directory instead of treating an unspecified directory as non-repository.
+    /// A POSIX shell keeps this independent of the user's interactive shell syntax.
+    nonisolated private static func commandInShellDirectory(for agent: CodingAgent) -> String {
+        let script = [
+            "maggie_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir 2>/dev/null);",
+            "if [ -n \"$maggie_common\" ]; then",
+            "case \"$maggie_common\" in */.git) maggie_main=${maggie_common%/.git} ;; " +
+                "*) maggie_main=$(/usr/bin/git rev-parse --show-toplevel 2>/dev/null) ;; esac;",
+            "if [ -n \"$maggie_main\" ]; then",
+            "(cd \"$maggie_main\" && \(agent.worktreeCommand)) && exit 0;",
+            "fi;",
+            "fi;",
+            "exec \(agent.launchCommand)",
+        ].joined(separator: " ")
+        return "/bin/sh -c \(AgentHandoff.shellQuoted(script))"
     }
 
     /// The main checkout of the repository `directory` is in: the worktree the others
