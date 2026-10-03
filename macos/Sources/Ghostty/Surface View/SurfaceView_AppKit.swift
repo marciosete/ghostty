@@ -408,6 +408,7 @@ extension Ghostty {
                 return
             }
             self.surfaceModel = Ghostty.Surface(cSurface: surface)
+            CodexContextCapture.shared.track(self)
 
             // Setup our tracking area so we get mouse moved events
             updateTrackingAreas()

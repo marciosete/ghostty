@@ -1370,6 +1370,10 @@ extension AppDelegate: NSMenuItemValidation {
             item.state = SystemPromptCapture.shared.isEnabled ? .on : .off
             return true
 
+        case #selector(toggleCodexContextCapture(_:)):
+            item.state = CodexContextCapture.shared.isEnabled ? .on : .off
+            return true
+
         case #selector(undo(_:)):
             if undoManager.canUndo {
                 item.title = "Undo \(undoManager.undoActionName)"

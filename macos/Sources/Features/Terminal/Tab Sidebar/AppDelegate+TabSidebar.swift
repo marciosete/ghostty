@@ -59,10 +59,21 @@ extension AppDelegate {
             title: "Show Captured Requests",
             action: #selector(AppDelegate.showCapturedSystemPrompts(_:)),
             keyEquivalent: "")
+        let captureCodexContext = NSMenuItem(
+            title: "Capture Codex Context",
+            action: #selector(AppDelegate.toggleCodexContextCapture(_:)),
+            keyEquivalent: "")
+        captureCodexContext.toolTip = "Save local session context for newly opened terminals. This is not an exact API request capture."
+        let showCodexContext = NSMenuItem(
+            title: "Show Captured Codex Context",
+            action: #selector(AppDelegate.showCapturedCodexContext(_:)),
+            keyEquivalent: "")
 
         viewMenu.insertItem(captureSystemPrompts, at: 8)
         viewMenu.insertItem(showSystemPrompts, at: 9)
-        viewMenu.insertItem(.separator(), at: 10)
+        viewMenu.insertItem(captureCodexContext, at: 10)
+        viewMenu.insertItem(showCodexContext, at: 11)
+        viewMenu.insertItem(.separator(), at: 12)
     }
 
     /// Takes effect in terminals opened afterwards.
@@ -73,5 +84,14 @@ extension AppDelegate {
 
     @IBAction func showCapturedSystemPrompts(_ sender: Any?) {
         SystemPromptCapture.shared.revealInFinder()
+    }
+
+    @IBAction func toggleCodexContextCapture(_ sender: Any?) {
+        let capture = CodexContextCapture.shared
+        capture.setEnabled(!capture.isEnabled)
+    }
+
+    @IBAction func showCapturedCodexContext(_ sender: Any?) {
+        CodexContextCapture.shared.revealInFinder()
     }
 }
