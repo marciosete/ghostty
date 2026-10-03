@@ -61,8 +61,7 @@ session's tab takes the colour of what its agent is doing:
 Pick **Auto** to follow the agent, **Attention** to only light up when a
 session needs you, or any fixed colour. Hover a session for its models, tokens
 and cost; an extended row shows its project and what it is doing; a speaker on
-the tab reads a Claude Code session's last reply aloud. (Codex doesn't say when
-it is waiting on you, so a Codex session shows blue until its turn ends.)
+the tab reads the session's last reply aloud.
 
 **A workspace that comes back.** Quit and reopen, and every window, tab, split
 and agent session is restored where it was, resumed with `claude --resume` or
@@ -76,14 +75,16 @@ when it is clean.
 
 **Usage.** A panel with the cost and tokens of every Claude Code and Codex
 session, by day, project and model, priced at current rates, with your Claude
-plan's limits alongside. A custom range for the accountant.
+and Codex plan limits alongside. A custom range for the accountant.
 
 **Reply timing in the titlebar.** The time to first token and the tokens per
-second of the reply streaming in the current tab, live. Claude Code only.
+second of the reply streaming in the current tab, live. For a Codex session, the
+time to first token and the length of the turn, once it ends.
 
 **Capture.** Turn it on, and the requests Claude Code sends to the model, system
-prompt and all, are saved per session, exactly as the API receives them. Claude
-Code only.
+prompt and all, are saved per session, exactly as the API receives them. For
+Codex, **Capture Codex Context** saves the session's own record of its context as
+it grows, which is Codex's history rather than the request it sends.
 
 **Keep the Mac awake** from the sidebar, lid closed included, while the flock
 works.
@@ -150,13 +151,17 @@ commits, grouped. The appcast is signed with the key pairing
 ## How it works
 
 Maggie finds the Claude Code running in each terminal from Claude Code's own
-session registry and reads the session's transcript. It finds a Codex session
-from the rollout file (`~/.codex/sessions/…`) the `codex` process keeps open,
-and reads the turn's state, model and edits off the end of it. There are no
-hooks to install and nothing to add to either agent's settings.
+session registry and reads the session's transcript. It starts Codex with
+`--no-daemon`, so each terminal's `codex` owns its session, and with a terminal
+title that names the thread, its model and its state; it finds the session from
+the rollout file (`~/.codex/sessions/…`) the process keeps open and reads the
+turn's state, model and edits off the end of it, and the title says when Codex
+is waiting on you. A `codex` started by hand runs through Codex's shared daemon
+and isn't followed. There are no hooks to install and nothing to add to either
+agent's settings.
 
 The usage panel is computed from those transcripts and rollouts, and the plan
-limits from what `claude` itself reports.
+limits from what `claude` and `codex app-server` report.
 
 For the reply timing, new terminals get `ANTHROPIC_BASE_URL` pointed at a local
 proxy that passes every request through to Anthropic untouched and watches the
