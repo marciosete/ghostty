@@ -64,6 +64,19 @@ struct AgentHandoffTests {
         #expect(entries == [.toolResult(String(repeating: "y", count: AgentHandoff.toolTextLimit) + "…")])
     }
 
+    @Test func codexStructuredToolResultsKeepTheirText() {
+        let entries = AgentHandoff.codexEntries([
+            "type": "response_item",
+            "payload": ["type": "function_call_output", "output": [
+                ["type": "input_text", "text": "Build succeeded."],
+                ["type": "input_image", "image_url": "data:image/png;base64,example"],
+                ["type": "input_text", "text": "All tests passed."],
+                ["type": "encrypted_content", "encrypted_content": "unreadable"],
+            ]],
+        ])
+        #expect(entries == [.toolResult("Build succeeded.\nAll tests passed.")])
+    }
+
     // MARK: The document
 
     @Test func markdownSaysWhoSaidWhat() {

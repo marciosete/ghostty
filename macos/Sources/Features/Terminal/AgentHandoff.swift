@@ -98,7 +98,20 @@ enum AgentHandoff {
             return [.tool(name: name, input: summary(ofToolInput: input))]
 
         case "function_call_output", "custom_tool_call_output":
-            return [.toolResult(trimmed(payload["output"] as? String ?? ""))]
+            let text: String
+            if let output = payload["output"] as? String {
+                text = output
+            } else if let parts = payload["output"] as? [[String: Any]] {
+                // Modern Responses tool results can mix text with images or audio.
+                // Carry the readable result over just as Claude's block results do.
+                text = parts.compactMap { part -> String? in
+                    guard part["type"] as? String == "input_text" else { return nil }
+                    return part["text"] as? String
+                }.joined(separator: "\n")
+            } else {
+                text = ""
+            }
+            return [.toolResult(trimmed(text))]
 
         default:
             return []
