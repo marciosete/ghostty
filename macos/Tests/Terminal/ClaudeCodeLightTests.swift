@@ -383,6 +383,34 @@ struct ClaudeCodeLightTests {
         #expect(Git.status(of: mainRepository)?.base == nil)
     }
 
+    @Test func detachedCodexWorktreeCountsAndLandsCommits() throws {
+        let (made, main, worktreeURL) = try Self.repositoryWithWorktree()
+        defer { try? FileManager.default.removeItem(at: made) }
+        try Self.git(["checkout", "--detach"], in: worktreeURL)
+        try Self.commit("codex.txt", "Codex change\n", in: worktreeURL)
+        try Self.commit("main.txt", "Main change\n", in: main)
+
+        let repository = try #require(Git.repository(containing: worktreeURL))
+        let worktree = try #require(Git.linkedWorktree(containing: worktreeURL))
+        #expect(worktree.branch == nil)
+        #expect(worktree.baseBranch == "main")
+        let status = try #require(Git.status(of: repository))
+        #expect(status.branch == nil)
+        #expect(status.base == "main")
+        #expect(status.ahead == 1)
+        #expect(status.behind == 1)
+        #expect(Git.progress(of: worktree)?.unlandedCommits == 1)
+
+        guard case .success = Git.land(worktree) else {
+            Issue.record("expected detached worktree commits to land")
+            return
+        }
+        #expect(Git.status(of: repository)?.ahead == 0)
+        #expect(Git.progress(of: worktree)?.unlandedCommits == 0)
+        #expect(try String(contentsOf: main.appendingPathComponent("codex.txt"), encoding: .utf8) == "Codex change\n")
+        #expect(Git.linkedWorktree(containing: worktreeURL)?.branch == nil)
+    }
+
     @Test func codexPrepromptDirectoryRequiresLiveThreadOwnership() throws {
         let (made, main, worktreeURL) = try Self.repositoryWithWorktree()
         defer { try? FileManager.default.removeItem(at: made) }

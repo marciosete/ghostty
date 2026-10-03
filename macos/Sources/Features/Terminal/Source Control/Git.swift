@@ -137,18 +137,18 @@ enum Git {
         ) else { return nil }
 
         var status = parseStatus(output)
-        if status.upstream == nil, repository.isLinkedWorktree, let branch = status.branch {
-            compare(&status, branch: branch, withMainCheckoutOf: repository)
+        if status.upstream == nil, repository.isLinkedWorktree {
+            compare(&status, withMainCheckoutOf: repository)
         }
         return status
     }
 
     /// Counts a worktree's commits against the branch of the main checkout, which they
-    /// land on, when the worktree's branch has no upstream to count against.
-    private static func compare(_ status: inout GitStatus, branch: String, withMainCheckoutOf repository: Repository) {
+    /// land on, when it has no upstream, including Codex's detached worktrees.
+    private static func compare(_ status: inout GitStatus, withMainCheckoutOf repository: Repository) {
         guard let list = run(["worktree", "list", "--porcelain", "-z"], in: repository.root),
               let base = parseWorktreeList(list).first?.branch,
-              base != branch,
+              base != status.branch,
               let behind = run(["rev-list", "--count", "HEAD..refs/heads/\(base)"], in: repository.root)
                 .flatMap({ Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }),
               let ahead = unlandedCommits(on: base, in: repository.root)
