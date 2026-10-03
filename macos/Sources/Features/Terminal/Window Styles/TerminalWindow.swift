@@ -139,6 +139,14 @@ class TerminalWindow: NSWindow {
         }
     }
 
+    /// Non-nil while the focused terminal runs Codex, even before timing is known.
+    var codexTurnTiming: CodexTurnTiming? {
+        didSet {
+            guard codexTurnTiming != oldValue else { return }
+            claudeStreamDisplayDidChange()
+        }
+    }
+
     /// The color the tab is shown in: the one assigned to it, or for `auto`, the color of
     /// what its Claude Code session is doing.
     var shownTabColor: TerminalTabColor {
@@ -182,7 +190,7 @@ class TerminalWindow: NSWindow {
     }
 
     /// Whether the tab offers to read its session's last response aloud: while it shows
-    /// what a Claude Code session is doing, or while it is reading.
+    /// what an agent session is doing, or while it is reading.
     var canSpeakClaudeCodeResponse: Bool {
         claudeCodeState != nil || isSpeakingClaudeCodeResponse
     }
@@ -666,6 +674,7 @@ class TerminalWindow: NSWindow {
     /// What the titlebar shows of the latest reply, while replies are shown.
     var claudeStreamReadout: String? {
         guard ClaudeStreams.shared.isEnabled else { return nil }
+        if let codexTurnTiming { return codexTurnTiming.label }
         return claudeStreamState?.label
     }
 
@@ -680,7 +689,7 @@ class TerminalWindow: NSWindow {
         let container = replySpeedAccessory.view
         if let readout = claudeStreamReadout {
             replySpeedLabel.stringValue = readout
-            replySpeedLabel.toolTip = claudeStreamState?.help
+            replySpeedLabel.toolTip = codexTurnTiming?.help ?? claudeStreamState?.help
             replySpeedLabel.sizeToFit()
             let size = replySpeedLabel.frame.size
             container.frame = NSRect(x: 0, y: 0, width: size.width + 12, height: size.height + 8)
